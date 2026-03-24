@@ -1,0 +1,19 @@
+spring:
+  ai:
+    openai:
+      api-key: ${AI_API_KEY:sk-xxx}
+      base-url: ${AI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${AI_MODEL:gpt-4o}
+
+  # 启用虚拟线程（Java 21）
+  threads:
+    virtual:
+      enabled: true
+
+# 日志级别
+logging:
+  level:
+    io.mybatis.learn: DEBUG
+    org.springframework.ai: INFO

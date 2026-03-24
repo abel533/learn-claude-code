@@ -8,25 +8,29 @@
       "alternatives": "We could have started with a richer toolset (file I/O, HTTP, database), but that would obscure the core insight: an LLM with a shell is already a general-purpose agent. Starting minimal also makes it obvious what each subsequent version actually adds.",
       "zh": {
         "title": "为什么仅靠 Bash 就够了",
-        "description": "Bash 能读写文件、运行任意程序、在进程间传递数据、管理文件系统。任何额外的工具（read_file、write_file 等）都只是 bash 已有能力的子集。增加工具并不会解锁新能力，只会增加模型需要理解的接口。模型只需学习一个工具的 schema，实现代码不超过 100 行。这就是最小可行 agent：一个工具，一个循环。"
+        "description": "Bash 能读写文件、运行任意程序、在进程间传递数据、管理文件系统。任何额外的工具（read_file、write_file 等）都只是 bash 已有能力的子集。增加工具并不会解锁新能力，只会增加模型需要理解的接口。模型只需学习一个工具的 schema，实现代码不超过 100 行。这就是最小可行 agent：一个工具，一个循环。",
+        "alternatives": "我们可以从更丰富的工具集开始（文件 I/O、HTTP、数据库），但那会掩盖核心洞察：一个配备 shell 的 LLM 已经是一个通用 agent。从最小化开始，也让每个后续版本真正新增了什么变得一目了然。"
       },
       "ja": {
         "title": "Bash だけで十分な理由",
-        "description": "Bash はファイルの読み書き、任意のプログラムの実行、プロセス間のデータパイプ、ファイルシステムの管理が可能です。追加のツール（read_file、write_file など）は bash が既に提供している機能の部分集合に過ぎません。ツールを増やしても新しい能力は得られず、モデルが理解すべきインターフェースが増えるだけです。モデルが学習するスキーマは1つだけで、実装は100行以内に収まります。これが最小限の実用的エージェント：1つのツール、1つのループです。"
+        "description": "Bash はファイルの読み書き、任意のプログラムの実行、プロセス間のデータパイプ、ファイルシステムの管理が可能です。追加のツール（read_file、write_file など）は bash が既に提供している機能の部分集合に過ぎません。ツールを増やしても新しい能力は得られず、モデルが理解すべきインターフェースが増えるだけです。モデルが学習するスキーマは1つだけで、実装は100行以内に収まります。これが最小限の実用的エージェント：1つのツール、1つのループです。",
+        "alternatives": "より豊富なツールセット（ファイル I/O、HTTP、データベース）から始めることもできましたが、それではコアの洞察が曖昧になります：シェルを持つ LLM は既に汎用エージェントです。最小限から始めることで、後続の各バージョンが実際に何を追加しているかが明確になります。"
       }
     },
     {
       "id": "process-as-subagent",
       "title": "Recursive Process Spawning as Subagent Mechanism",
-      "description": "When the agent runs `python v0.py \"subtask\"`, it spawns a completely new process with a fresh LLM context. This child process is effectively a subagent: it has its own system prompt, its own conversation history, and its own task focus. When it finishes, the parent gets the stdout result. This is subagent delegation without any framework -- just Unix process semantics. Each child process naturally isolates concerns because it literally cannot see the parent's context.",
+      "description": "When the agent runs `java -jar agent.jar \"subtask\"`, it uses ProcessBuilder to spawn a completely new JVM process with a fresh LLM context. This child process is effectively a subagent: it has its own system prompt, its own conversation history, and its own task focus. When it finishes, the parent gets the stdout result. This is subagent delegation without any framework -- just process semantics. Each child process naturally isolates concerns because it literally cannot see the parent's context.",
       "alternatives": "A framework-level subagent system (like v3's Task tool) gives more control over what tools the subagent can access and how results are returned. But at v0, the point is to show that process spawning is the most primitive form of agent delegation -- no shared memory, no message passing, just stdin/stdout.",
       "zh": {
         "title": "用递归进程创建实现子代理机制",
-        "description": "当 agent 执行 `python v0.py \"subtask\"` 时，它会创建一个全新的进程，拥有全新的 LLM 上下文。这个子进程实际上就是一个子代理：有自己的系统提示词、对话历史和任务焦点。子进程完成后，父进程通过 stdout 获取结果。这就是不依赖任何框架的子代理委派——纯粹的 Unix 进程语义。每个子进程天然隔离关注点，因为它根本看不到父进程的上下文。"
+        "description": "当 agent 执行 `java -jar agent.jar \"subtask\"` 时，它通过 ProcessBuilder 创建一个全新的 JVM 进程，拥有全新的 LLM 上下文。这个子进程实际上就是一个子代理：有自己的系统提示词、对话历史和任务焦点。子进程完成后，父进程通过 stdout 获取结果。这就是不依赖任何框架的子代理委派——纯粹的进程语义。每个子进程天然隔离关注点，因为它根本看不到父进程的上下文。",
+        "alternatives": "框架级的子代理系统（如 v3 的 Task 工具）可以更精确地控制子代理能访问哪些工具以及结果如何返回。但在 v0 阶段，关键是展示进程创建是最原始的代理委派形式——没有共享内存，没有消息传递，只有 stdin/stdout。"
       },
       "ja": {
         "title": "再帰プロセス生成によるサブエージェント機構",
-        "description": "エージェントが `python v0.py \"subtask\"` を実行すると、新しい LLM コンテキストを持つ完全に新しいプロセスが生成されます。この子プロセスは事実上サブエージェントです：独自のシステムプロンプト、会話履歴、タスクフォーカスを持ちます。完了すると、親プロセスは stdout で結果を受け取ります。これはフレームワークなしのサブエージェント委任です——共有メモリもメッセージパッシングもなく、stdin/stdout だけです。各子プロセスは親のコンテキストを参照できないため、関心の分離が自然に実現されます。"
+        "description": "エージェントが `java -jar agent.jar \"subtask\"` を実行すると、ProcessBuilder により新しい LLM コンテキストを持つ完全に新しい JVM プロセスが生成されます。この子プロセスは事実上サブエージェントです：独自のシステムプロンプト、会話履歴、タスクフォーカスを持ちます。完了すると、親プロセスは stdout で結果を受け取ります。これはフレームワークなしのサブエージェント委任です——共有メモリもメッセージパッシングもなく、stdin/stdout だけです。各子プロセスは親のコンテキストを参照できないため、関心の分離が自然に実現されます。",
+        "alternatives": "フレームワークレベルのサブエージェントシステム（v3 の Task ツールなど）は、サブエージェントがアクセスできるツールや結果の返し方をより細かく制御できます。しかし v0 の段階では、プロセス生成がエージェント委任の最も原始的な形態であることを示すのがポイントです——共有メモリもメッセージパッシングもなく、stdin/stdout だけです。"
       }
     },
     {
@@ -36,11 +40,13 @@
       "alternatives": "Later versions (v2) add explicit planning via TodoWrite. But v0 proves that implicit planning through the model's reasoning is sufficient for many tasks. The planning framework only becomes necessary when you need external visibility into the agent's intentions.",
       "zh": {
         "title": "没有规划框架——由模型自行决策",
-        "description": "没有规划器，没有任务队列，没有状态机。系统提示词告诉模型如何处理问题，模型根据对话历史决定下一步执行什么 bash 命令。这是有意为之的：在这个层级，添加规划层属于过早抽象。模型的思维链本身就是计划。agent 循环只是不断询问模型下一步做什么，直到模型不再请求工具为止。"
+        "description": "没有规划器，没有任务队列，没有状态机。系统提示词告诉模型如何处理问题，模型根据对话历史决定下一步执行什么 bash 命令。这是有意为之的：在这个层级，添加规划层属于过早抽象。模型的思维链本身就是计划。agent 循环只是不断询问模型下一步做什么，直到模型不再请求工具为止。",
+        "alternatives": "后续版本（v2）通过 TodoWrite 添加了显式规划。但 v0 证明了通过模型推理进行的隐式规划对许多任务已经足够。只有当你需要从外部观察 agent 的意图时，规划框架才变得必要。"
       },
       "ja": {
         "title": "計画フレームワークなし——モデルが全てを決定",
-        "description": "プランナーもタスクキューも状態マシンもありません。システムプロンプトがモデルに問題の取り組み方を伝え、モデルがこれまでの会話に基づいて次に実行する bash コマンドを決定します。これは意図的な設計です：このレベルでは計画レイヤーの追加は時期尚早な抽象化です。モデルの思考の連鎖そのものが計画です。エージェントループはモデルがツールの呼び出しを止めるまで、次の行動を問い続けるだけです。"
+        "description": "プランナーもタスクキューも状態マシンもありません。システムプロンプトがモデルに問題の取り組み方を伝え、モデルがこれまでの会話に基づいて次に実行する bash コマンドを決定します。これは意図的な設計です：このレベルでは計画レイヤーの追加は時期尚早な抽象化です。モデルの思考の連鎖そのものが計画です。エージェントループはモデルがツールの呼び出しを止めるまで、次の行動を問い続けるだけです。",
+        "alternatives": "後のバージョン（v2）では TodoWrite による明示的な計画が追加されます。しかし v0 は、モデルの推論による暗黙的な計画が多くのタスクに十分であることを証明しています。計画フレームワークが必要になるのは、エージェントの意図を外部から可視化する必要がある場合だけです。"
       }
     }
   ]

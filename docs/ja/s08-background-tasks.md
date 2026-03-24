@@ -1,14 +1,14 @@
-# s08: Background Tasks
+# s08: Background Tasks (バックグラウンドタスク)
 
 `s01 > s02 > s03 > s04 > s05 > s06 | s07 > [ s08 ] s09 > s10 > s11 > s12`
 
-> *"遅い操作はバックグラウンドへ、エージェントは次を考え続ける"* -- デーモンスレッドがコマンド実行、完了後に通知を注入。
+> *"遅い操作はバックグラウンドへ、エージェントは次を考え続ける"* -- バックグラウンドスレッドがコマンド実行、完了後に通知を注入。
 >
 > **Harness 層**: バックグラウンド実行 -- モデルが考え続ける間、Harness が待つ。
 
 ## 問題
 
-一部のコマンドは数分かかる: `npm install`、`pytest`、`docker build`。ブロッキングループでは、モデルはサブプロセスの完了を待って座っている。ユーザーが「依存関係をインストールして、その間にconfigファイルを作って」と言っても、エージェントは並列ではなく逐次的に処理する。
+一部のコマンドは数分かかる: `npm install`、`pytest`、`docker build`。ブロッキングループでは、モデルは待つしかない。ユーザーが「依存関係をインストールして、その間に config ファイルを作って」と言っても、エージェントは1つずつしか処理できない。
 
 ## 解決策
 
@@ -32,77 +32,106 @@ Agent --[spawn A]--[spawn B]--[other work]----
 
 ## 仕組み
 
-1. BackgroundManagerがスレッドセーフな通知キューでタスクを追跡する。
+1. BackgroundManager がスレッドセーフな並行コンテナでタスクを追跡する。Java では `ConcurrentHashMap` と `CopyOnWriteArrayList` を使用し、Python の手動ロックを置き換える。
 
-```python
-class BackgroundManager:
-    def __init__(self):
-        self.tasks = {}
-        self._notification_queue = []
-        self._lock = threading.Lock()
+```java
+public class BackgroundManager {
+    private static final int TIMEOUT_SECONDS = 300;
+
+    private final Map<String, TaskInfo> tasks = new ConcurrentHashMap<>();
+    private final List<Notification> notificationQueue = new CopyOnWriteArrayList<>();
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+
+    record TaskInfo(String status, String result, String command) {}
+    public record Notification(String taskId, String status, String command, String result) {}
+}
 ```
 
-2. `run()`がデーモンスレッドを開始し、即座にリターンする。
+2. `backgroundRun()` が仮想スレッド (Java 21) に投入し、即座にリターンする。Python の `daemon=True` スレッドに比べ、仮想スレッドはより軽量で JVM がスケジュールする。
 
-```python
-def run(self, command: str) -> str:
-    task_id = str(uuid.uuid4())[:8]
-    self.tasks[task_id] = {"status": "running", "command": command}
-    thread = threading.Thread(
-        target=self._execute, args=(task_id, command), daemon=True)
-    thread.start()
-    return f"Background task {task_id} started"
+```java
+@Tool(description = "Run a command in a background thread. Returns task_id immediately without waiting.")
+public String backgroundRun(
+        @ToolParam(description = "The shell command to run in background") String command) {
+    String taskId = UUID.randomUUID().toString().substring(0, 8);
+    tasks.put(taskId, new TaskInfo("running", null, command));
+
+    executor.submit(() -> execute(taskId, command));
+
+    return "Background task " + taskId + " started: "
+            + command.substring(0, Math.min(80, command.length()));
+}
 ```
 
-3. サブプロセス完了時に、結果を通知キューへ。
+3. サブプロセス完了時に、結果が通知キューに入る。`ProcessBuilder` でコマンドを実行し、タイムアウト制御をサポート。
 
-```python
-def _execute(self, task_id, command):
-    try:
-        r = subprocess.run(command, shell=True, cwd=WORKDIR,
-            capture_output=True, text=True, timeout=300)
-        output = (r.stdout + r.stderr).strip()[:50000]
-    except subprocess.TimeoutExpired:
-        output = "Error: Timeout (300s)"
-    with self._lock:
-        self._notification_queue.append({
-            "task_id": task_id, "result": output[:500]})
+```java
+private void execute(String taskId, String command) {
+    String status, output;
+    try {
+        ProcessBuilder pb = new ProcessBuilder("sh", "-c", command);
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream()))) {
+            output = reader.lines().collect(Collectors.joining("\n"));
+        }
+        boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        if (!finished) { process.destroyForcibly(); status = "timeout"; }
+        else { status = "completed"; }
+    } catch (Exception e) { output = "Error: " + e.getMessage(); status = "error"; }
+
+    tasks.put(taskId, new TaskInfo(status, output, command));
+    notificationQueue.add(new Notification(taskId, status, command, output));
+}
 ```
 
-4. エージェントループが各LLM呼び出しの前に通知をドレインする。
+4. 毎回のユーザー入力時に通知キューをドレインし、システムプロンプトに注入する。Spring AI の `ChatClient` が内部ツールループを管理するため、毎回のユーザー入力時にドレイン＋システムプロンプト構築に変更。核心的なコンセプトは同じ: fire and forget。
 
-```python
-def agent_loop(messages: list):
-    while True:
-        notifs = BG.drain_notifications()
-        if notifs:
-            notif_text = "\n".join(
-                f"[bg:{n['task_id']}] {n['result']}" for n in notifs)
-            messages.append({"role": "user",
-                "content": f"<background-results>\n{notif_text}\n"
-                           f"</background-results>"})
-            messages.append({"role": "assistant",
-                "content": "Noted background results."})
-        response = client.messages.create(...)
+```java
+AgentRunner.interactive("s08", userMessage -> {
+    // バックグラウンドタスク通知をドレイン（Python のループ前 drain_notifications に相当）
+    var notifs = bgManager.drainNotifications();
+    String bgContext = "";
+    if (!notifs.isEmpty()) {
+        String notifText = notifs.stream()
+                .map(n -> "[bg:" + n.taskId() + "] " + n.status() + ": " + n.result())
+                .collect(Collectors.joining("\n"));
+        bgContext = "\n\n<background-results>\n" + notifText + "\n</background-results>";
+    }
+
+    String system = "You are a coding agent. Use backgroundRun for long-running commands."
+            + bgContext;
+
+    ChatClient chatClient = ChatClient.builder(chatModel)
+            .defaultSystem(system)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(), bgManager)
+            .build();
+
+    return chatClient.prompt().user(userMessage).call().content();
+});
 ```
 
-ループはシングルスレッドのまま。サブプロセスI/Oだけが並列化される。
+ループはシングルスレッドのまま。サブプロセス I/O だけが並列化される。
 
-## s07からの変更点
+## s07 からの変更点
 
-| Component      | Before (s07)     | After (s08)                |
-|----------------|------------------|----------------------------|
-| Tools          | 8                | 6 (base + background_run + check)|
-| Execution      | Blocking only    | Blocking + background threads|
-| Notification   | None             | Queue drained per loop     |
-| Concurrency    | None             | Daemon threads             |
+| コンポーネント   | 変更前 (s07)     | 変更後 (s08)                       |
+|----------------|------------------|------------------------------------|
+| Tools          | 8                | 6 (基本 + backgroundRun + check)   |
+| 実行方式       | ブロッキングのみ  | ブロッキング + 仮想スレッド (Java 21) |
+| 通知メカニズム  | なし             | 毎ターンドレインの ConcurrentLinkedQueue |
+| 並行性         | なし             | 仮想スレッド (より軽量、JVM スケジュール) |
 
 ## 試してみる
 
 ```sh
 cd learn-claude-code
-python agents/s08_background_tasks.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s08.S08BackgroundTasks
 ```
+
+以下のプロンプトを試してみよう (英語プロンプトの方が LLM に効果的だが、日本語でも可):
 
 1. `Run "sleep 5 && echo done" in the background, then create a file while it runs`
 2. `Start 3 background tasks: "sleep 2", "sleep 4", "sleep 6". Check their status.`

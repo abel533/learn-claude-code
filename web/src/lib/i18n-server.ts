@@ -6,11 +6,21 @@ type Messages = typeof en;
 
 const messagesMap: Record<string, Messages> = { en, zh, ja };
 
+function resolveKey(obj: any, key: string): string | undefined {
+  const parts = key.split(".");
+  let result: any = obj;
+  for (const part of parts) {
+    result = result?.[part];
+    if (result === undefined) return undefined;
+  }
+  return typeof result === "string" ? result : undefined;
+}
+
 export function getTranslations(locale: string, namespace: string) {
-  const messages = messagesMap[locale] || en;
-  const ns = (messages as Record<string, Record<string, string>>)[namespace];
-  const fallbackNs = (en as Record<string, Record<string, string>>)[namespace];
+  const messages = messagesMap[locale] || zh;
+  const ns = (messages as Record<string, any>)[namespace];
+  const fallbackNs = (zh as Record<string, any>)[namespace];
   return (key: string): string => {
-    return ns?.[key] || fallbackNs?.[key] || key;
+    return resolveKey(ns, key) || resolveKey(fallbackNs, key) || key;
   };
 }

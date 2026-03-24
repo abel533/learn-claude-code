@@ -7,6 +7,8 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+.idea
+*.iml
 .Python
 build/
 develop-eggs/
@@ -195,6 +197,8 @@ cython_debug/
 .task_outputs/
 .tasks/
 .teams/
+.team/
+.worktrees/
 
 # Ruff stuff:
 .ruff_cache/
@@ -225,3 +229,5 @@ test_providers.py
 # Internal analysis artifacts (not learning material)
 analysis/
 analysis_progress.md
+TODO.md
+.test-workspace/

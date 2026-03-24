@@ -45,6 +45,8 @@ const MAX_LOC = Math.max(
 export function Timeline() {
   const t = useTranslations("timeline");
   const tv = useTranslations("version");
+  const tMeta = useTranslations("version_meta");
+  const tLayer = useTranslations("layer_labels");
   const locale = useLocale();
 
   return (
@@ -60,7 +62,7 @@ export function Timeline() {
               <span
                 className={cn("h-3 w-3 rounded-full", LAYER_DOT_BG[layer.id])}
               />
-              <span className="text-xs font-medium">{layer.label}</span>
+              <span className="text-xs font-medium">{tLayer(layer.id)}</span>
             </div>
           ))}
         </div>
@@ -114,14 +116,14 @@ export function Timeline() {
                   <div className="flex flex-wrap items-start gap-2">
                     <LayerBadge layer={meta.layer}>{versionId}</LayerBadge>
                     <span className="text-xs text-[var(--color-text-secondary)]">
-                      {meta.coreAddition}
+                      {tMeta(`${versionId}.coreAddition`)}
                     </span>
                   </div>
 
                   <h3 className="mt-2 text-base font-semibold sm:text-lg">
                     {meta.title}
                     <span className="ml-2 text-sm font-normal text-[var(--color-text-secondary)]">
-                      {meta.subtitle}
+                      {tMeta(`${versionId}.subtitle`)}
                     </span>
                   </h3>
 
@@ -149,7 +151,7 @@ export function Timeline() {
                   {/* Key insight */}
                   {meta.keyInsight && (
                     <p className="mt-3 text-sm italic text-[var(--color-text-secondary)]">
-                      &ldquo;{meta.keyInsight}&rdquo;
+                      &ldquo;{tMeta(`${versionId}.keyInsight`)}&rdquo;
                     </p>
                   )}
 

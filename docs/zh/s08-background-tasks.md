@@ -32,58 +32,85 @@ Agent --[spawn A]--[spawn B]--[other work]----
 
 ## 工作原理
 
-1. BackgroundManager 用线程安全的通知队列追踪任务。
+1. BackgroundManager 用线程安全的并发容器追踪任务。Java 使用 `ConcurrentHashMap` 和 `CopyOnWriteArrayList` 代替 Python 的手动加锁。
 
-```python
-class BackgroundManager:
-    def __init__(self):
-        self.tasks = {}
-        self._notification_queue = []
-        self._lock = threading.Lock()
+```java
+public class BackgroundManager {
+    private static final int TIMEOUT_SECONDS = 300;
+
+    private final Map<String, TaskInfo> tasks = new ConcurrentHashMap<>();
+    private final List<Notification> notificationQueue = new CopyOnWriteArrayList<>();
+    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+
+    record TaskInfo(String status, String result, String command) {}
+    public record Notification(String taskId, String status, String command, String result) {}
+}
 ```
 
-2. `run()` 启动守护线程, 立即返回。
+2. `backgroundRun()` 提交虚拟线程 (Java 21), 立即返回。相比 Python 的 `daemon=True` 线程，虚拟线程更轻量、由 JVM 调度。
 
-```python
-def run(self, command: str) -> str:
-    task_id = str(uuid.uuid4())[:8]
-    self.tasks[task_id] = {"status": "running", "command": command}
-    thread = threading.Thread(
-        target=self._execute, args=(task_id, command), daemon=True)
-    thread.start()
-    return f"Background task {task_id} started"
+```java
+@Tool(description = "Run a command in a background thread. Returns task_id immediately without waiting.")
+public String backgroundRun(
+        @ToolParam(description = "The shell command to run in background") String command) {
+    String taskId = UUID.randomUUID().toString().substring(0, 8);
+    tasks.put(taskId, new TaskInfo("running", null, command));
+
+    executor.submit(() -> execute(taskId, command));
+
+    return "Background task " + taskId + " started: "
+            + command.substring(0, Math.min(80, command.length()));
+}
 ```
 
-3. 子进程完成后, 结果进入通知队列。
+3. 子进程完成后, 结果进入通知队列。使用 `ProcessBuilder` 执行命令，支持超时控制。
 
-```python
-def _execute(self, task_id, command):
-    try:
-        r = subprocess.run(command, shell=True, cwd=WORKDIR,
-            capture_output=True, text=True, timeout=300)
-        output = (r.stdout + r.stderr).strip()[:50000]
-    except subprocess.TimeoutExpired:
-        output = "Error: Timeout (300s)"
-    with self._lock:
-        self._notification_queue.append({
-            "task_id": task_id, "result": output[:500]})
+```java
+private void execute(String taskId, String command) {
+    String status, output;
+    try {
+        ProcessBuilder pb = new ProcessBuilder("sh", "-c", command);
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream()))) {
+            output = reader.lines().collect(Collectors.joining("\n"));
+        }
+        boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        if (!finished) { process.destroyForcibly(); status = "timeout"; }
+        else { status = "completed"; }
+    } catch (Exception e) { output = "Error: " + e.getMessage(); status = "error"; }
+
+    tasks.put(taskId, new TaskInfo(status, output, command));
+    notificationQueue.add(new Notification(taskId, status, command, output));
+}
 ```
 
-4. 每次 LLM 调用前排空通知队列。
+4. 每次用户输入时排空通知队列, 注入系统提示。Spring AI 的 `ChatClient` 管理内部工具循环, 因此改为在每次用户输入时 drain 通知并构建系统提示, 核心概念不变: fire and forget。
 
-```python
-def agent_loop(messages: list):
-    while True:
-        notifs = BG.drain_notifications()
-        if notifs:
-            notif_text = "\n".join(
-                f"[bg:{n['task_id']}] {n['result']}" for n in notifs)
-            messages.append({"role": "user",
-                "content": f"<background-results>\n{notif_text}\n"
-                           f"</background-results>"})
-            messages.append({"role": "assistant",
-                "content": "Noted background results."})
-        response = client.messages.create(...)
+```java
+AgentRunner.interactive("s08", userMessage -> {
+    // Drain 后台任务通知（对应 Python 中循环前的 drain_notifications）
+    var notifs = bgManager.drainNotifications();
+    String bgContext = "";
+    if (!notifs.isEmpty()) {
+        String notifText = notifs.stream()
+                .map(n -> "[bg:" + n.taskId() + "] " + n.status() + ": " + n.result())
+                .collect(Collectors.joining("\n"));
+        bgContext = "\n\n<background-results>\n" + notifText + "\n</background-results>";
+    }
+
+    String system = "You are a coding agent. Use backgroundRun for long-running commands."
+            + bgContext;
+
+    ChatClient chatClient = ChatClient.builder(chatModel)
+            .defaultSystem(system)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(), bgManager)
+            .build();
+
+    return chatClient.prompt().user(userMessage).call().content();
+});
 ```
 
 循环保持单线程。只有子进程 I/O 被并行化。
@@ -92,16 +119,16 @@ def agent_loop(messages: list):
 
 | 组件           | 之前 (s07)       | 之后 (s08)                         |
 |----------------|------------------|------------------------------------|
-| Tools          | 8                | 6 (基础 + background_run + check)  |
-| 执行方式       | 仅阻塞           | 阻塞 + 后台线程                    |
-| 通知机制       | 无               | 每轮排空的队列                     |
-| 并发           | 无               | 守护线程                           |
+| Tools          | 8                | 6 (基础 + backgroundRun + check)   |
+| 执行方式       | 仅阻塞           | 阻塞 + 虚拟线程 (Java 21)          |
+| 通知机制       | 无               | 每轮排空的 ConcurrentLinkedQueue    |
+| 并发           | 无               | 虚拟线程 (更轻量, JVM 调度)         |
 
 ## 试一试
 
 ```sh
 cd learn-claude-code
-python agents/s08_background_tasks.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s08.S08BackgroundTasks
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):

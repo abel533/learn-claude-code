@@ -39,67 +39,113 @@ Communication:
 
 1. TeammateManager 通过 config.json 维护团队名册。
 
-```python
-class TeammateManager:
-    def __init__(self, team_dir: Path):
-        self.dir = team_dir
-        self.dir.mkdir(exist_ok=True)
-        self.config_path = self.dir / "config.json"
-        self.config = self._load_config()
-        self.threads = {}
+```java
+// src/main/java/io/mybatis/learn/s09/TeammateManager.java
+public class TeammateManager {
+    private final ChatModel chatModel;
+    private final MessageBus bus;
+    private final Path configPath;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private Map<String, Object> config;
+    // Python用threading.Thread + dict; Java用ConcurrentHashMap天然线程安全
+    private final Map<String, Thread> threads = new ConcurrentHashMap<>();
+
+    public TeammateManager(ChatModel chatModel, MessageBus bus, Path teamDir) {
+        this.chatModel = chatModel;
+        this.bus = bus;
+        this.configPath = teamDir.resolve("config.json");
+        Files.createDirectories(teamDir);
+        this.config = loadConfig();
+    }
 ```
 
 2. `spawn()` 创建队友并在线程中启动 agent loop。
 
-```python
-def spawn(self, name: str, role: str, prompt: str) -> str:
-    member = {"name": name, "role": role, "status": "working"}
-    self.config["members"].append(member)
-    self._save_config()
-    thread = threading.Thread(
-        target=self._teammate_loop,
-        args=(name, role, prompt), daemon=True)
-    thread.start()
-    return f"Spawned teammate '{name}' (role: {role})"
+```java
+// Python用threading.Thread; Java用Thread.startVirtualThread()虚拟线程
+public synchronized String spawn(String name, String role, String prompt) {
+    Map<String, Object> member = new LinkedHashMap<>();
+    member.put("name", name);
+    member.put("role", role);
+    member.put("status", "working");
+    ((List<Map<String, Object>>) config.get("members")).add(member);
+    saveConfig();
+
+    // 虚拟线程：轻量级，由JVM调度，不占用OS线程
+    Thread thread = Thread.startVirtualThread(
+            () -> teammateLoop(name, role, prompt));
+    threads.put(name, thread);
+    return "Spawned '" + name + "' (role: " + role + ")";
+}
 ```
 
 3. MessageBus: append-only 的 JSONL 收件箱。`send()` 追加一行; `read_inbox()` 读取全部并清空。
 
-```python
-class MessageBus:
-    def send(self, sender, to, content, msg_type="message", extra=None):
-        msg = {"type": msg_type, "from": sender,
-               "content": content, "timestamp": time.time()}
-        if extra:
-            msg.update(extra)
-        with open(self.dir / f"{to}.jsonl", "a") as f:
-            f.write(json.dumps(msg) + "\n")
+```java
+// src/main/java/io/mybatis/learn/core/team/MessageBus.java
+// Python靠GIL隐式保证线程安全; Java用synchronized显式保证
+public class MessageBus {
+    private final Path inboxDir;
+    private final ObjectMapper mapper = new ObjectMapper();
 
-    def read_inbox(self, name):
-        path = self.dir / f"{name}.jsonl"
-        if not path.exists(): return "[]"
-        msgs = [json.loads(l) for l in path.read_text().strip().splitlines() if l]
-        path.write_text("")  # drain
-        return json.dumps(msgs, indent=2)
+    public synchronized String send(String sender, String to, String content,
+                                    String msgType, Map<String, Object> extra) {
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("type", msgType);
+        msg.put("from", sender);
+        msg.put("content", content);
+        msg.put("timestamp", System.currentTimeMillis() / 1000.0);
+        if (extra != null) msg.putAll(extra);
+
+        Path inbox = inboxDir.resolve(to + ".jsonl");
+        Files.writeString(inbox, mapper.writeValueAsString(msg) + "\n",
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        return "Sent " + msgType + " to " + to;
+    }
+
+    public synchronized List<Map<String, Object>> readInbox(String name) {
+        Path inbox = inboxDir.resolve(name + ".jsonl");
+        if (!Files.exists(inbox)) return List.of();
+        List<Map<String, Object>> messages = new ArrayList<>();
+        for (String line : Files.readAllLines(inbox)) {
+            if (!line.isBlank())
+                messages.add(mapper.readValue(line, new TypeReference<>() {}));
+        }
+        Files.writeString(inbox, "");  // drain
+        return messages;
+    }
+}
 ```
 
-4. 每个队友在每次 LLM 调用前检查收件箱, 将消息注入上下文。
+4. 每个队友在每次 `call()` 调用间检查收件箱, 将消息注入上下文。ChatClient 的 `call()` 等价于 Python 的完整工具循环（循环到 `stop_reason != "tool_use"` 为止）。
 
-```python
-def _teammate_loop(self, name, role, prompt):
-    messages = [{"role": "user", "content": prompt}]
-    for _ in range(50):
-        inbox = BUS.read_inbox(name)
-        if inbox != "[]":
-            messages.append({"role": "user",
-                "content": f"<inbox>{inbox}</inbox>"})
-            messages.append({"role": "assistant",
-                "content": "Noted inbox messages."})
-        response = client.messages.create(...)
-        if response.stop_reason != "tool_use":
-            break
-        # execute tools, append results...
-    self._find_member(name)["status"] = "idle"
+```java
+// Python队友在每次LLM调用前检查收件箱; Java在每次call()调用间检查
+protected void teammateLoop(String name, String role, String initialPrompt) {
+    String sysPrompt = String.format(
+            "You are '%s', role: %s. Use send_message to communicate.",
+            name, role);
+
+    var messageTool = new TeammateMessageTool(bus, name);
+    ChatClient client = ChatClient.builder(chatModel)
+            .defaultSystem(sysPrompt)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(), messageTool)
+            .build();
+
+    // 初始工作（call() = 完整工具链，等价于Python循环到stop_reason != "tool_use"）
+    String response = client.prompt(initialPrompt).call().content();
+
+    // 每次call()之间检查收件箱（而非Python的每次LLM调用之间）
+    for (int round = 0; round < 50; round++) {
+        Thread.sleep(2000);
+        var inbox = bus.readInbox(name);
+        if (inbox.isEmpty()) break;
+        String inboxJson = mapper.writeValueAsString(inbox);
+        response = client.prompt("<inbox>" + inboxJson + "</inbox>").call().content();
+    }
+    setStatus(name, "idle");
+}
 ```
 
 ## 相对 s08 的变更
@@ -117,7 +163,7 @@ def _teammate_loop(self, name, role, prompt):
 
 ```sh
 cd learn-claude-code
-python agents/s09_agent_teams.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s09.S09AgentTeams
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):

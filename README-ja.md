@@ -1,6 +1,6 @@
 # Learn Claude Code -- 真の Agent のための Harness Engineering
 
-[English](./README.md) | [中文](./README-zh.md) | [日本語](./README-ja.md)
+[English](./README-en.md) | [中文](./README.md) | [日本語](./README-ja.md)
 
 ## モデルこそが Agent である
 
@@ -143,20 +143,20 @@ Claude Code = 一つの agent loop
 
     User --> messages[] --> LLM --> response
                                       |
-                            stop_reason == "tool_use"?
+                            ツール呼び出しリクエストあり?
                            /                          \
-                         yes                           no
+                         あり                          なし
                           |                             |
-                    execute tools                    return text
-                    append results
-                    loop back -----------------> messages[]
+                    @Tool メソッドを実行              テキストを返す
+                    結果を返却
+                    ループ継続 -----------------> messages[]
 
 
-    最小ループ。すべての AI Agent にこのループが必要だ。
+    最小ループ。すべての AI エージェントにこのループが必要。
     モデルがツール呼び出しと停止を決める。
-    コードはモデルの要求を実行するだけ。
-    このリポジトリはこのループを囲むすべて --
-    Agent を特定ドメインで効果的にする Harness -- の作り方を教える。
+    Spring AI の ChatClient.call() がこのループを自動駆動する。
+    本リポジトリはこのループを囲むすべて --
+    エージェントを特定ドメインで効果的にする Harness -- の作り方を教える。
 ```
 
 **12 の段階的セッション、シンプルなループから分離された自律実行まで。**
@@ -164,7 +164,7 @@ Claude Code = 一つの agent loop
 
 > **s01** &nbsp; *"One loop & Bash is all you need"* &mdash; 1つのツール + 1つのループ = エージェント
 >
-> **s02** &nbsp; *"ツールを足すなら、ハンドラーを1つ足すだけ"* &mdash; ループは変わらない。新ツールは dispatch map に登録するだけ
+> **s02** &nbsp; *"ツールを足すなら、ハンドラーを1つ足すだけ"* &mdash; ループは変わらない。新ツールは `@Tool` アノテーション + `defaultTools()` で登録するだけ
 >
 > **s03** &nbsp; *"計画のないエージェントは行き当たりばったり"* &mdash; まずステップを書き出し、それから実行
 >
@@ -190,34 +190,43 @@ Claude Code = 一つの agent loop
 
 ## コアパターン
 
-```python
-def agent_loop(messages):
-    while True:
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM,
-            messages=messages, tools=TOOLS,
-        )
-        messages.append({"role": "assistant",
-                         "content": response.content})
+```java
+// Spring AI の ChatClient + @Tool 注解实现 Agent 循环
+// 模型自动决定何时调用工具、何时返回文本 -- 循环由框架驱动
 
-        if response.stop_reason != "tool_use":
-            return
+@SpringBootApplication
+public class S01AgentLoop implements CommandLineRunner {
 
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                output = TOOL_HANDLERS[block.name](**block.input)
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": output,
-                })
-        messages.append({"role": "user", "content": results})
+    @Bean
+    public CommandLineRunner agentLoop(ChatClient.Builder builder) {
+        ChatClient chatClient = builder
+            .defaultSystem("You are a helpful assistant with access to tools.")
+            .defaultTools(new BashTool())   // 注册工具
+            .build();
+
+        return args -> {
+            // 一次 call() 内部自动完成: 调用模型 → 检测工具请求 → 执行工具 → 回传结果 → 再次调用模型...
+            String result = chatClient.prompt()
+                .user(userInput)
+                .call()
+                .content();
+            System.out.println(result);
+        };
+    }
+}
+
+// @Tool 注解让方法自动成为模型可调用的工具
+public class BashTool {
+    @Tool(description = "Execute a shell command and return stdout/stderr")
+    public String executeBash(String command) {
+        // 执行命令并返回结果
+    }
+}
 ```
 
-各セッションはこのループの上に 1 つの Harness メカニズムを重ねる -- ループ自体は変わらない。ループは Agent のもの。メカニズムは Harness のもの。
+Spring AI の `ChatClient.call()` は完全なエージェントループを内部にカプセル化：モデル呼び出し → ツール呼び出しリクエスト検出 → `@Tool` メソッド実行 → 結果をモデルに返却 → モデルがテキストを返すまで繰り返し。各セッションはこのループの上に 1 つの Harness メカニズムを重ねる -- ループ自体は変わらない。ループはエージェントのもの。メカニズムは Harness のもの。
 
-## スコープ (重要)
+## 範囲説明 (重要)
 
 このリポジトリは Harness 工学の 0->1 学習プロジェクト -- Agent モデルを囲む環境の構築を学ぶ。
 学習を優先するため、以下の本番メカニズムは意図的に簡略化または省略している：
@@ -232,15 +241,45 @@ def agent_loop(messages):
 
 ## クイックスタート
 
-```sh
-git clone https://github.com/shareAI-lab/learn-claude-code
-cd learn-claude-code
-pip install -r requirements.txt
-cp .env.example .env   # .env を編集して ANTHROPIC_API_KEY を入力
+### 環境要件
 
-python agents/s01_agent_loop.py       # ここから開始
-python agents/s12_worktree_task_isolation.py  # 全セッションの到達点
-python agents/s_full.py               # 総括: 全メカニズム統合
+- **JDK 21+** (推奨 [Eclipse Temurin](https://adoptium.net/) または GraalVM)
+- **Maven 3.9+**
+- OpenAI プロトコル互換の LLM API Key (DeepSeek、智谱 GLM、通義千問、OpenAI 等)
+
+### クローンとビルド
+
+```sh
+git clone https://github.com/abel533/learn-claude-code
+cd learn-claude-code
+mvn compile                            # 编译项目
+```
+
+### 環境変数の設定
+
+```sh
+# Linux / macOS
+export AI_API_KEY=your-api-key
+export AI_BASE_URL=https://api.deepseek.com    # 替换为你的模型服务商地址
+export AI_MODEL=deepseek-chat                   # 替换为你使用的模型名称
+
+# Windows PowerShell
+$env:AI_API_KEY="your-api-key"
+$env:AI_BASE_URL="https://api.deepseek.com"
+$env:AI_MODEL="deepseek-chat"
+```
+
+### セッションの実行
+
+```sh
+# 从第一课开始
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s01.S01AgentLoop
+
+# 完整递进终点
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s12.S12WorktreeIsolation
+
+# 总纲: 全部机制合一
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.full.SFullAgent
 ```
 
 ### Web プラットフォーム
@@ -251,16 +290,26 @@ python agents/s_full.py               # 総括: 全メカニズム統合
 cd web && npm install && npm run dev   # http://localhost:3000
 ```
 
+### Java 版の特色
+
+本プロジェクトは **Java 21 + Spring Boot 3.5.7 + Spring AI 1.0.3** 技術スタックを採用しており、オリジナルの Python 版に比べ以下の特色がある：
+
+- **複数のLLMプロバイダーに対応** -- OpenAI プロトコルを通じて DeepSeek、智谱 GLM、通義千問、Moonshot 等の国産モデルに対応、特定ベンダーに縛られない
+- **`@Tool` アノテーションによるツール呼び出しループの自動処理** -- Spring AI フレームワークが「モデル呼び出し → ツール実行 → 結果返却」の完全なループを自動処理、while ループの手書き不要
+- **Java 21 仮想スレッド** -- 軽量な並行処理でバックグラウンドタスクとマルチエージェント協調を実現、スレッドプール管理のオーバーヘッド不要
+- **各セッション独立実行可能** -- 各セッションは `@SpringBootApplication` + `CommandLineRunner` であり、`mvn exec:java` 一行で起動可能
+- **型安全** -- Java の強い型システムがコンパイル時にエラーを検出、IDE の自動補完にも優しい
+
 ## 学習パス
 
 ```
 フェーズ1: ループ                     フェーズ2: 計画と知識
 ==================                   ==============================
 s01  エージェントループ      [1]     s03  TodoWrite               [5]
-     while + stop_reason                  TodoManager + nag リマインダー
+     ChatClient + @Tool                   TodoManager + nag リマインダー
      |                                    |
      +-> s02  Tool Use            [4]     s04  サブエージェント      [5]
-              dispatch map: name->handler     子ごとに新しい messages[]
+              @Tool で複数ツール登録           各サブエージェントに独立 ChatClient
                                               |
                                          s05  Skills               [5]
                                               SKILL.md を tool_result で注入
@@ -274,7 +323,7 @@ s07  タスクシステム           [8]     s09  エージェントチーム   
      ファイルベース CRUD + 依存グラフ      チームメイト + JSONL メールボックス
      |                                    |
 s08  バックグラウンドタスク   [6]     s10  チームプロトコル        [12]
-     デーモンスレッド + 通知キュー         シャットダウン + プラン承認 FSM
+     仮想スレッド + 通知キュー             シャットダウン + プラン承認 FSM
                                           |
                                      s11  自律エージェント        [14]
                                           アイドルサイクル + 自動クレーム
@@ -290,10 +339,27 @@ s08  バックグラウンドタスク   [6]     s10  チームプロトコル  
 ```
 learn-claude-code/
 |
-|-- agents/                        # Python リファレンス実装 (s01-s12 + s_full 総括)
+|-- src/main/java/io/mybatis/learn/   # Java 実装 (Spring AI + Spring Boot)
+|   |-- core/                         #   共通ツールクラス (AgentRunner, BashTool, EditFileTool 等)
+|   |-- s01/  S01AgentLoop.java       #   セッション 01: エージェントループ
+|   |-- s02/  S02ToolUse.java         #   セッション 02: マルチツール登録
+|   |-- s03/  S03TodoWrite.java       #   セッション 03: 計画駆動
+|   |-- s04/  S04Subagent.java        #   セッション 04: サブエージェント
+|   |-- s05/  S05SkillLoading.java    #   セッション 05: Skill ロード
+|   |-- s06/  S06ContextCompact.java  #   セッション 06: コンテキスト圧縮
+|   |-- s07/  S07TaskSystem.java      #   セッション 07: タスクシステム
+|   |-- s08/  S08BackgroundTasks.java #   セッション 08: バックグラウンドタスク
+|   |-- s09/  S09AgentTeams.java      #   セッション 09: エージェントチーム
+|   |-- s10/  S10TeamProtocols.java   #   セッション 10: チームプロトコル
+|   |-- s11/  S11AutonomousAgents.java#   セッション 11: 自律エージェント
+|   |-- s12/  S12WorktreeIsolation.java#  セッション 12: Worktree 分離
+|   +-- full/ SFullAgent.java         #   総括: 全メカニズム統合
+|
+|-- agents/                        # Python リファレンス実装 (オリジナル版、対照用に保存)
 |-- docs/{en,zh,ja}/               # メンタルモデル優先のドキュメント (3言語)
 |-- web/                           # インタラクティブ学習プラットフォーム (Next.js)
 |-- skills/                        # s05 の Skill ファイル
+|-- pom.xml                        # Maven ビルド設定 (Spring Boot 3.5.7 + Spring AI 1.0.3)
 +-- .github/workflows/ci.yml      # CI: 型チェック + ビルド
 ```
 

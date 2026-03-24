@@ -1,4 +1,4 @@
-# s05: Skills
+# s05: Skills (スキルローディング)
 
 `s01 > s02 > s03 > s04 > [ s05 ] s06 | s07 > s08 > s09 > s10 > s11 > s12`
 
@@ -8,7 +8,7 @@
 
 ## 問題
 
-エージェントにドメイン固有のワークフローを遵守させたい: gitの規約、テストパターン、コードレビューチェックリスト。すべてをシステムプロンプトに入れると、使われないスキルにトークンを浪費する。10スキル x 2000トークン = 20,000トークン、ほとんどが任意のタスクに無関係だ。
+エージェントにドメイン固有のワークフローを遵守させたい: git の規約、テストパターン、コードレビューチェックリスト。すべてをシステムプロンプトに入れるとトークンの浪費だ -- 10スキル x 2000トークン = 20,000トークン、大半が当面のタスクとは無関係。
 
 ## 解決策
 
@@ -31,11 +31,11 @@ When model calls load_skill("git"):
 +--------------------------------------+
 ```
 
-第1層: スキル*名*をシステムプロンプトに(低コスト)。第2層: スキル*本体*をtool_resultに(オンデマンド)。
+第1層: スキル名をシステムプロンプトに（低コスト）。第2層: 完全なコンテンツを tool_result でオンデマンド配信。
 
 ## 仕組み
 
-1. 各スキルは `SKILL.md` ファイルを含むディレクトリとして配置される。
+1. 各スキルは `SKILL.md` ファイルを含むディレクトリで、YAML frontmatter 付き。
 
 ```
 skills/
@@ -45,62 +45,109 @@ skills/
     SKILL.md       # ---\n name: code-review\n description: Review code\n ---\n ...
 ```
 
-2. SkillLoaderが `SKILL.md` を再帰的に探索し、ディレクトリ名をスキル識別子として使用する。
+2. SkillLoader が `SKILL.md` を再帰的にスキャンし、ディレクトリ名をスキル識別子として使用する。
 
-```python
-class SkillLoader:
-    def __init__(self, skills_dir: Path):
-        self.skills = {}
-        for f in sorted(skills_dir.rglob("SKILL.md")):
-            text = f.read_text()
-            meta, body = self._parse_frontmatter(text)
-            name = meta.get("name", f.parent.name)
-            self.skills[name] = {"meta": meta, "body": body}
+```java
+public class SkillLoader {
 
-    def get_descriptions(self) -> str:
-        lines = []
-        for name, skill in self.skills.items():
-            desc = skill["meta"].get("description", "")
-            lines.append(f"  - {name}: {desc}")
-        return "\n".join(lines)
+    private static final Pattern FRONTMATTER_PATTERN =
+            Pattern.compile("^---\\n(.*?)\\n---\\n(.*)", Pattern.DOTALL);
 
-    def get_content(self, name: str) -> str:
-        skill = self.skills.get(name)
-        if not skill:
-            return f"Error: Unknown skill '{name}'."
-        return f"<skill name=\"{name}\">\n{skill['body']}\n</skill>"
-```
+    private final Map<String, SkillInfo> skills = new LinkedHashMap<>();
 
-3. 第1層はシステムプロンプトに配置。第2層は通常のツールハンドラ。
+    record SkillInfo(Map<String, String> meta, String body, String path) {}
 
-```python
-SYSTEM = f"""You are a coding agent at {WORKDIR}.
-Skills available:
-{SKILL_LOADER.get_descriptions()}"""
+    public SkillLoader(Path skillsDir) {
+        loadAll(skillsDir);
+    }
 
-TOOL_HANDLERS = {
-    # ...base tools...
-    "load_skill": lambda **kw: SKILL_LOADER.get_content(kw["name"]),
+    /** skills ディレクトリ配下のすべての SKILL.md ファイルを再帰スキャン */
+    private void loadAll(Path skillsDir) {
+        if (!Files.exists(skillsDir)) return;
+        try (Stream<Path> paths = Files.walk(skillsDir)) {
+            paths.filter(p -> p.getFileName().toString().equals("SKILL.md"))
+                    .sorted()
+                    .forEach(p -> {
+                        String text = Files.readString(p);
+                        var parsed = parseFrontmatter(text);
+                        String name = parsed.meta().getOrDefault("name",
+                                p.getParent().getFileName().toString());
+                        skills.put(name, new SkillInfo(
+                                parsed.meta(), parsed.body(), p.toString()));
+                    });
+        }
+    }
+
+    /** Layer 1: 全スキルの短い説明を取得（システムプロンプト注入用） */
+    public String getDescriptions() {
+        if (skills.isEmpty()) return "(no skills available)";
+        StringBuilder sb = new StringBuilder();
+        for (var entry : skills.entrySet()) {
+            String desc = entry.getValue().meta()
+                    .getOrDefault("description", "No description");
+            sb.append("  - ").append(entry.getKey())
+                    .append(": ").append(desc).append("\n");
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    /** Layer 2: 指定スキルの完全なコンテンツを読み込む（@Tool メソッドとして） */
+    @Tool(description = "Load specialized knowledge by name.")
+    public String loadSkill(
+            @ToolParam(description = "Skill name to load") String name) {
+        SkillInfo skill = skills.get(name);
+        if (skill == null)
+            return "Error: Unknown skill '" + name + "'. Available: "
+                    + String.join(", ", skills.keySet());
+        return "<skill name=\"" + name + "\">\n"
+                + skill.body() + "\n</skill>";
+    }
 }
 ```
 
-モデルはどのスキルが存在するかを知り(低コスト)、関連する時にだけ読み込む(高コスト)。
+3. 第1層はシステムプロンプトに配置。第2層は SkillLoader 上の `@Tool` アノテーションメソッドでオンデマンド読み込み。
 
-## s04からの変更点
+```java
+public S05SkillLoading(ChatModel chatModel) {
+    Path skillsDir = Path.of(System.getProperty("user.dir"), "skills");
+    SkillLoader skillLoader = new SkillLoader(skillsDir);
 
-| Component      | Before (s04)     | After (s05)                |
-|----------------|------------------|----------------------------|
-| Tools          | 5 (base + task)  | 5 (base + load_skill)      |
-| System prompt  | Static string    | + skill descriptions       |
-| Knowledge      | None             | skills/\*/SKILL.md files   |
-| Injection      | None             | Two-layer (system + result)|
+    // Layer 1: スキルメタデータをシステムプロンプトに注入
+    String system = "You are a coding agent at " + System.getProperty("user.dir") + ".\n"
+            + "Use loadSkill to access specialized knowledge.\n\n"
+            + "Skills available:\n"
+            + skillLoader.getDescriptions();
+
+    this.chatClient = ChatClient.builder(chatModel)
+            .defaultSystem(system)
+            .defaultTools(
+                    new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(),
+                    skillLoader  // Layer 2: loadSkill @Tool メソッド
+            )
+            .build();
+}
+```
+
+モデルはどのスキルが存在するかを知り（低コスト）、必要な時にだけ完全なコンテンツを読み込む（高コスト）。
+
+## s04 からの変更点
+
+| コンポーネント   | 変更前 (s04)     | 変更後 (s05)                   |
+|----------------|------------------|--------------------------------|
+| Tools          | 5 (基本 + task)  | 5 (基本 + load_skill)          |
+| システムプロンプト | 静的文字列     | + スキル説明リスト              |
+| 知識ベース      | なし             | skills/\*/SKILL.md ファイル     |
+| 注入方式       | なし             | 二層構造 (システムプロンプト + result) |
 
 ## 試してみる
 
 ```sh
 cd learn-claude-code
-python agents/s05_skill_loading.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s05.S05SkillLoading
 ```
+
+以下のプロンプトを試してみよう (英語プロンプトの方が LLM に効果的だが、日本語でも可):
 
 1. `What skills are available?`
 2. `Load the agent-builder skill and follow its instructions`

@@ -20,7 +20,7 @@ interface FlowNode {
 const NODES: FlowNode[] = [
   { id: "start", label: "Start", x: 160, y: 30, w: 120, h: 40, type: "rect" },
   { id: "api_call", label: "API Call", x: 160, y: 110, w: 120, h: 40, type: "rect" },
-  { id: "check", label: "stop_reason?", x: 160, y: 200, w: 140, h: 50, type: "diamond" },
+  { id: "check", label: "Tool calls?", x: 160, y: 200, w: 140, h: 50, type: "diamond" },
   { id: "execute", label: "Execute Tool", x: 160, y: 300, w: 120, h: 40, type: "rect" },
   { id: "append", label: "Append Result", x: 160, y: 380, w: 120, h: 40, type: "rect" },
   { id: "end", label: "Break / Done", x: 380, y: 200, w: 120, h: 40, type: "rect" },
@@ -36,10 +36,10 @@ interface FlowEdge {
 const EDGES: FlowEdge[] = [
   { from: "start", to: "api_call" },
   { from: "api_call", to: "check" },
-  { from: "check", to: "execute", label: "tool_use" },
+  { from: "check", to: "execute", label: "Yes" },
   { from: "execute", to: "append" },
   { from: "append", to: "api_call" },
-  { from: "check", to: "end", label: "end_turn" },
+  { from: "check", to: "end", label: "No" },
 ];
 
 // Which nodes light up at each step
@@ -91,10 +91,10 @@ const STEP_INFO = [
   { title: "The While Loop", desc: "Every agent is a while loop that keeps calling the model until it says 'stop'." },
   { title: "User Input", desc: "The loop starts when the user sends a message." },
   { title: "Call the Model", desc: "Send all messages to the LLM. It sees everything and decides what to do." },
-  { title: "stop_reason: tool_use", desc: "The model wants to use a tool. The loop continues." },
+  { title: "Tool call detected", desc: "The model wants to use a tool. The loop continues." },
   { title: "Execute & Append", desc: "Run the tool, append the result to messages[]. Feed it back." },
   { title: "Loop Again", desc: "Same code path, second iteration. The model decides to edit a file." },
-  { title: "stop_reason: end_turn", desc: "The model is done. Loop exits. That's the entire agent." },
+  { title: "No tool calls → return text", desc: "The model is done. Loop exits. That's the entire agent." },
 ];
 
 // -- Helpers --
@@ -171,7 +171,7 @@ export default function AgentLoop({ title }: { title?: string }) {
           {/* Left panel: SVG Flowchart (60%) */}
           <div className="w-full lg:w-[60%]">
             <div className="mb-2 font-mono text-xs text-zinc-400 dark:text-zinc-500">
-              while (stop_reason === "tool_use")
+              chatClient.prompt().call().content()
             </div>
             <svg
               viewBox="0 0 500 440"

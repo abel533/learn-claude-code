@@ -15,7 +15,7 @@ export const VERSION_META: Record<string, {
   prevVersion: string | null;
 }> = {
   s01: { title: "The Agent Loop", subtitle: "Bash is All You Need", coreAddition: "Single-tool agent loop", keyInsight: "The minimal agent kernel is a while loop + one tool", layer: "tools", prevVersion: null },
-  s02: { title: "Tools", subtitle: "One Handler Per Tool", coreAddition: "Tool dispatch map", keyInsight: "The loop stays the same; new tools register into the dispatch map", layer: "tools", prevVersion: "s01" },
+  s02: { title: "Tools", subtitle: "One Handler Per Tool", coreAddition: "@Tool annotation + defaultTools()", keyInsight: "The loop stays the same; new tools register via @Tool and defaultTools()", layer: "tools", prevVersion: "s01" },
   s03: { title: "TodoWrite", subtitle: "Plan Before You Act", coreAddition: "TodoManager + nag reminder", keyInsight: "An agent without a plan drifts; list the steps first, then execute", layer: "planning", prevVersion: "s02" },
   s04: { title: "Subagents", subtitle: "Clean Context Per Subtask", coreAddition: "Subagent spawn with isolated messages[]", keyInsight: "Subagents use independent messages[], keeping the main conversation clean", layer: "planning", prevVersion: "s03" },
   s05: { title: "Skills", subtitle: "Load on Demand", coreAddition: "SkillLoader + two-layer injection", keyInsight: "Inject knowledge via tool_result when needed, not upfront in the system prompt", layer: "planning", prevVersion: "s04" },
@@ -27,6 +27,19 @@ export const VERSION_META: Record<string, {
   s11: { title: "Autonomous Agents", subtitle: "Scan Board, Claim Tasks", coreAddition: "Task board polling + timeout-based self-governance", keyInsight: "Teammates scan the board and claim tasks themselves; no need for the lead to assign each one", layer: "collaboration", prevVersion: "s10" },
   s12: { title: "Worktree + Task Isolation", subtitle: "Isolate by Directory", coreAddition: "Composable worktree lifecycle + event stream over a shared task board", keyInsight: "Each works in its own directory; tasks manage goals, worktrees manage directories, bound by ID", layer: "collaboration", prevVersion: "s11" },
 };
+
+/** 获取本地化的版本元数据，title 保持英文，其余字段使用翻译 */
+export function getLocalizedVersionMeta(versionId: string, tMeta?: (key: string) => string) {
+  const meta = VERSION_META[versionId];
+  if (!meta || !tMeta) return meta;
+  return {
+    ...meta,
+    titleLocal: tMeta(`${versionId}.title_local`) || meta.title,
+    subtitle: tMeta(`${versionId}.subtitle`) || meta.subtitle,
+    keyInsight: tMeta(`${versionId}.keyInsight`) || meta.keyInsight,
+    coreAddition: tMeta(`${versionId}.coreAddition`) || meta.coreAddition,
+  };
+}
 
 export const LAYERS = [
   { id: "tools" as const, label: "Tools & Execution", color: "#3B82F6", versions: ["s01", "s02"] },

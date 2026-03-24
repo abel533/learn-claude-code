@@ -40,81 +40,130 @@ Teammate lifecycle with idle cycle:
     |
     +---> 60s timeout ----------------------> SHUTDOWN
 
-Identity re-injection after compression:
-  if len(messages) <= 3:
-    messages.insert(0, identity_block)
+Identity via system prompt (always present):
+  ChatClient.builder(chatModel)
+      .defaultSystem(identityPrompt)  // 每次调用自动携带
 ```
 
 ## 工作原理
 
 1. 队友循环分两个阶段: WORK 和 IDLE。LLM 停止调用工具 (或调用了 `idle`) 时, 进入 IDLE。
 
-```python
-def _loop(self, name, role, prompt):
-    while True:
-        # -- WORK PHASE --
-        messages = [{"role": "user", "content": prompt}]
-        for _ in range(50):
-            response = client.messages.create(...)
-            if response.stop_reason != "tool_use":
-                break
-            # execute tools...
-            if idle_requested:
-                break
+```java
+// src/main/java/io/mybatis/learn/s11/S11AutonomousAgents.java
+// AutonomousTeammateManager.autonomousLoop()
 
-        # -- IDLE PHASE --
-        self._set_status(name, "idle")
-        resume = self._idle_poll(name, messages)
-        if not resume:
-            self._set_status(name, "shutdown")
-            return
-        self._set_status(name, "working")
+private void autonomousLoop(String name, String role, String initialPrompt) {
+    // idle标志：工具调用时设置，外部循环检测
+    AtomicBoolean idleRequested = new AtomicBoolean(false);
+    var idleTool = new IdleTool(idleRequested);
+
+    ChatClient client = ChatClient.builder(chatModel)
+            .defaultSystem(sysPrompt)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(),
+                    messageTool, protocolTool, idleTool, claimTool)
+            .build();
+
+    while (true) {
+        // -- WORK PHASE --
+        String nextMsg = initialPrompt;
+        for (int round = 0; round < 50 && nextMsg != null; round++) {
+            var inbox = bus.readInbox(name);
+            // ... 合并收件箱消息到 nextMsg ...
+            idleRequested.set(false);
+            String response = client.prompt(sb.toString()).call().content();
+            if (idleRequested.get()) break;  // idle工具被调用
+            nextMsg = null;  // 后续轮次靠inbox驱动
+        }
+
+        // -- IDLE PHASE --
+        setStatus(name, "idle");
+        // ... 轮询收件箱 + 任务板（见下文） ...
+        if (!resume) { setStatus(name, "shutdown"); return; }
+        setStatus(name, "working");
+    }
+}
 ```
 
 2. 空闲阶段循环轮询收件箱和任务看板。
 
-```python
-def _idle_poll(self, name, messages):
-    for _ in range(IDLE_TIMEOUT // POLL_INTERVAL):  # 60s / 5s = 12
-        time.sleep(POLL_INTERVAL)
-        inbox = BUS.read_inbox(name)
-        if inbox:
-            messages.append({"role": "user",
-                "content": f"<inbox>{inbox}</inbox>"})
-            return True
-        unclaimed = scan_unclaimed_tasks()
-        if unclaimed:
-            claim_task(unclaimed[0]["id"], name)
-            messages.append({"role": "user",
-                "content": f"<auto-claimed>Task #{unclaimed[0]['id']}: "
-                           f"{unclaimed[0]['subject']}</auto-claimed>"})
-            return True
-    return False  # timeout -> shutdown
+```java
+// IDLE PHASE: 轮询收件箱 + 任务板
+setStatus(name, "idle");
+boolean resume = false;
+int polls = IDLE_TIMEOUT / Math.max(POLL_INTERVAL, 1);  // 60/5 = 12
+
+for (int p = 0; p < polls; p++) {
+    Thread.sleep(POLL_INTERVAL * 1000L);
+
+    // 检查收件箱
+    var inbox = bus.readInbox(name);
+    if (!inbox.isEmpty()) {
+        initialPrompt = "<inbox>" + mapper.writeValueAsString(inbox) + "</inbox>";
+        resume = true;
+        break;
+    }
+
+    // 扫描任务板
+    var unclaimed = scanUnclaimedTasks(tasksDir);
+    if (!unclaimed.isEmpty()) {
+        var task = unclaimed.get(0);
+        int taskId = ((Number) task.get("id")).intValue();
+        claimTask(tasksDir, taskId, name);
+        initialPrompt = String.format(
+                "<auto-claimed>Task #%d: %s\n%s</auto-claimed>",
+                taskId, task.get("subject"),
+                task.getOrDefault("description", ""));
+        resume = true;
+        break;
+    }
+}
+
+if (!resume) { setStatus(name, "shutdown"); return; }
+setStatus(name, "working");
 ```
 
 3. 任务看板扫描: 找 pending 状态、无 owner、未被阻塞的任务。
 
-```python
-def scan_unclaimed_tasks() -> list:
-    unclaimed = []
-    for f in sorted(TASKS_DIR.glob("task_*.json")):
-        task = json.loads(f.read_text())
-        if (task.get("status") == "pending"
-                and not task.get("owner")
-                and not task.get("blockedBy")):
-            unclaimed.append(task)
-    return unclaimed
+```java
+static List<Map<String, Object>> scanUnclaimedTasks(Path tasksDir) {
+    if (!Files.exists(tasksDir)) return List.of();
+    List<Map<String, Object>> unclaimed = new ArrayList<>();
+    ObjectMapper mapper = new ObjectMapper();
+    try (var files = Files.list(tasksDir)) {
+        files.filter(f -> f.getFileName().toString().startsWith("task_")
+                       && f.getFileName().toString().endsWith(".json"))
+             .sorted()
+             .forEach(f -> {
+                 Map<String, Object> task = mapper.readValue(f.toFile(), Map.class);
+                 if ("pending".equals(task.get("status"))
+                     && (task.get("owner") == null || "".equals(task.get("owner")))
+                     && (task.get("blockedBy") == null
+                         || ((List<?>) task.get("blockedBy")).isEmpty())) {
+                     unclaimed.add(task);
+                 }
+             });
+    }
+    return unclaimed;
+}
 ```
 
-4. 身份重注入: 上下文过短 (说明发生了压缩) 时, 在开头插入身份块。
+4. 身份保持: Java/Spring AI 的 `ChatClient.defaultSystem()` 在每次调用时自动携带系统提示, 身份信息始终存在, 无需像 Python 版本那样在压缩后手动重注入。
 
-```python
-if len(messages) <= 3:
-    messages.insert(0, {"role": "user",
-        "content": f"<identity>You are '{name}', role: {role}, "
-                   f"team: {team_name}. Continue your work.</identity>"})
-    messages.insert(1, {"role": "assistant",
-        "content": f"I am {name}. Continuing."})
+```java
+// 身份信息通过 defaultSystem 在构建时注入, 每次 prompt 自动携带
+String sysPrompt = String.format(
+        "You are '%s', role: %s, team: %s, at %s. "
+        + "Use idle tool when you have no more work. You will auto-claim new tasks.",
+        name, role, teamName, workDir);
+
+ChatClient client = ChatClient.builder(chatModel)
+        .defaultSystem(sysPrompt)  // 身份始终存在于系统提示中
+        .defaultTools(new BashTool(), new ReadFileTool(),
+                new WriteFileTool(), new EditFileTool(),
+                messageTool, protocolTool, idleTool, claimTool)
+        .build();
 ```
 
 ## 相对 s10 的变更
@@ -132,7 +181,7 @@ if len(messages) <= 3:
 
 ```sh
 cd learn-claude-code
-python agents/s11_autonomous_agents.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s11.S11AutonomousAgents
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):

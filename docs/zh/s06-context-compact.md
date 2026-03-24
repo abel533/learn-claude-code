@@ -44,61 +44,119 @@ continue    [Layer 2: auto_compact]
 
 ## 工作原理
 
-1. **第一层 -- micro_compact**: 每次 LLM 调用前, 将旧的 tool result 替换为占位符。
+1. **第一层 -- 上下文窗口管理**: Spring AI 的 ChatClient 自动管理工具循环, 无法在循环内插入压缩。Java 版通过限制注入系统提示的对话轮数（仅保留最近 N 轮）并截断内容来实现等价效果。
 
-```python
-def micro_compact(messages: list) -> list:
-    tool_results = []
-    for i, msg in enumerate(messages):
-        if msg["role"] == "user" and isinstance(msg.get("content"), list):
-            for j, part in enumerate(msg["content"]):
-                if isinstance(part, dict) and part.get("type") == "tool_result":
-                    tool_results.append((i, j, part))
-    if len(tool_results) <= KEEP_RECENT:
-        return messages
-    for _, _, part in tool_results[:-KEEP_RECENT]:
-        if len(part.get("content", "")) > 100:
-            part["content"] = f"[Previous: used {tool_name}]"
-    return messages
+```java
+/** 估算 token 数量: 粗略估计 4 字符 ≈ 1 token */
+public int estimateTokens() {
+    int chars = history.stream().mapToInt(t -> t.content().length()).sum();
+    return chars / 4;
+}
+
+/** 获取对话历史的摘要（用于注入系统提示, 仅保留最近几轮） */
+public String getContextSummary() {
+    if (history.isEmpty()) return "";
+    StringBuilder sb = new StringBuilder("\n<conversation-context>\n");
+    int start = Math.max(0, history.size() - KEEP_RECENT * 2);
+    for (int i = start; i < history.size(); i++) {
+        ConversationTurn turn = history.get(i);
+        sb.append("[").append(turn.role()).append("]: ")
+                .append(turn.content(), 0, Math.min(500, turn.content().length()))
+                .append("\n");
+    }
+    sb.append("</conversation-context>");
+    return sb.toString();
+}
 ```
 
 2. **第二层 -- auto_compact**: token 超过阈值时, 保存完整对话到磁盘, 让 LLM 做摘要。
 
-```python
-def auto_compact(messages: list) -> list:
-    # Save transcript for recovery
-    transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    with open(transcript_path, "w") as f:
-        for msg in messages:
-            f.write(json.dumps(msg, default=str) + "\n")
-    # LLM summarizes
-    response = client.messages.create(
-        model=MODEL,
-        messages=[{"role": "user", "content":
-            "Summarize this conversation for continuity..."
-            + json.dumps(messages, default=str)[:80000]}],
-        max_tokens=2000,
-    )
-    return [
-        {"role": "user", "content": f"[Compressed]\n\n{response.content[0].text}"},
-        {"role": "assistant", "content": "Understood. Continuing."},
-    ]
+```java
+public String compact() {
+    // 保存 transcript 到磁盘（完整历史不丢失）
+    Files.createDirectories(transcriptDir);
+    Path transcriptPath = transcriptDir.resolve(
+            "transcript_" + System.currentTimeMillis() + ".jsonl");
+    try (BufferedWriter writer = Files.newBufferedWriter(transcriptPath)) {
+        for (ConversationTurn turn : history) {
+            writer.write(objectMapper.writeValueAsString(turn));
+            writer.newLine();
+        }
+    }
+
+    // LLM 生成摘要
+    String conversationText = history.stream()
+            .map(t -> t.role() + ": " + t.content())
+            .reduce("", (a, b) -> a + "\n" + b);
+    if (conversationText.length() > 80000) {
+        conversationText = conversationText.substring(0, 80000);
+    }
+
+    ChatClient summaryClient = ChatClient.builder(chatModel).build();
+    String summary = summaryClient.prompt()
+            .user("Summarize this conversation for continuity. Include: "
+                    + "1) What was accomplished, 2) Current state, "
+                    + "3) Key decisions.\n\n" + conversationText)
+            .call().content();
+
+    // 用摘要替换历史
+    history.clear();
+    history.add(new ConversationTurn("system",
+            "[Conversation compressed. Transcript: " + transcriptPath
+                    + "]\n\n" + summary));
+    return summary;
+}
 ```
 
-3. **第三层 -- manual compact**: `compact` 工具按需触发同样的摘要机制。
+3. **第三层 -- manual compact**: `CompactTool` 工具按需触发同样的摘要机制。
 
-4. 循环整合三层:
+```java
+public class CompactTool {
+    private final ContextCompactor compactor;
 
-```python
-def agent_loop(messages: list):
-    while True:
-        micro_compact(messages)                        # Layer 1
-        if estimate_tokens(messages) > THRESHOLD:
-            messages[:] = auto_compact(messages)       # Layer 2
-        response = client.messages.create(...)
-        # ... tool execution ...
-        if manual_compact:
-            messages[:] = auto_compact(messages)       # Layer 3
+    public CompactTool(ContextCompactor compactor) {
+        this.compactor = compactor;
+    }
+
+    @Tool(description = "Trigger manual conversation compression to free up context space.")
+    public String compact(
+            @ToolParam(description = "What to preserve in summary",
+                    required = false) String focus) {
+        compactor.requestCompact();
+        return "Compression triggered. Context will be summarized.";
+    }
+}
+```
+
+4. REPL 层整合三层 (Spring AI 的 ChatClient 自动管理工具循环, 压缩在用户消息级别触发):
+
+```java
+AgentRunner.interactive("s06", userMessage -> {
+    // Layer 2: 自动压缩检查（每次用户输入前）
+    if (compactor.needsAutoCompact()) {
+        System.out.println("[auto_compact triggered]");
+        compactor.compact();
+    }
+    compactor.addTurn("user", userMessage);
+
+    // 动态系统提示：包含对话上下文摘要
+    String system = baseSystem + compactor.getContextSummary();
+    ChatClient chatClient = ChatClient.builder(chatModel)
+            .defaultSystem(system)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(), compactTool)
+            .build();
+
+    String response = chatClient.prompt()
+            .user(userMessage).call().content();
+    compactor.addTurn("assistant", response != null ? response : "");
+
+    // Layer 3: 手动压缩（如果 Agent 调用了 compact 工具）
+    if (compactor.isCompactRequested()) {
+        compactor.compact();
+    }
+    return response;
+});
 ```
 
 完整历史通过 transcript 保存在磁盘上。信息没有真正丢失, 只是移出了活跃上下文。
@@ -109,7 +167,7 @@ def agent_loop(messages: list):
 |----------------|------------------|--------------------------------|
 | Tools          | 5                | 5 (基础 + compact)             |
 | 上下文管理     | 无               | 三层压缩                       |
-| Micro-compact  | 无               | 旧结果 -> 占位符               |
+| 上下文窗口管理 | 无               | 限制注入轮数 + 内容截断        |
 | Auto-compact   | 无               | token 阈值触发                 |
 | Transcripts    | 无               | 保存到 .transcripts/           |
 
@@ -117,11 +175,11 @@ def agent_loop(messages: list):
 
 ```sh
 cd learn-claude-code
-python agents/s06_context_compact.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s06.S06ContextCompact
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):
 
-1. `Read every Python file in the agents/ directory one by one` (观察 micro-compact 替换旧结果)
+1. `Read every Java file in the src/ directory one by one` (观察上下文窗口管理效果)
 2. `Keep reading files until compression triggers automatically`
 3. `Use the compact tool to manually compress the conversation`

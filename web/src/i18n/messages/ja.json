@@ -30,13 +30,20 @@
     "none": "なし",
     "source_diff": "ソースコード差分",
     "empty_hint": "上で2つのバージョンを選択して比較してください。",
-    "architecture": "アーキテクチャ"
+    "architecture": "アーキテクチャ",
+    "select_placeholder": "-- 選択してください --"
   },
   "diff": {
     "new_classes": "新規クラス",
     "new_tools": "新規ツール",
     "new_functions": "新規関数",
-    "loc_delta": "コード量の差分"
+    "loc_delta": "コード量の差分",
+    "lines": "行",
+    "source_diff": "ソースコード差分",
+    "version_not_found": "バージョンが見つかりません",
+    "back_to_timeline": "学習パスに戻る",
+    "back_to": "に戻る",
+    "first_version_hint": "これは最初のバージョンです。比較対象の前バージョンがありません。"
   },
   "sessions": {
     "s01": "エージェントループ",
@@ -72,5 +79,19 @@
     "s10": "FSM チームプロトコル",
     "s11": "自律エージェントサイクル",
     "s12": "Worktree タスク分離"
+  },
+  "version_meta": {
+    "s01": { "title_local": "エージェントループ", "subtitle": "ループ + Bash だけで十分", "keyInsight": "最小エージェントカーネルはwhileループ + 1つのツール", "coreAddition": "単一ツールエージェントループ" },
+    "s02": { "title_local": "ツール", "subtitle": "ツールごとに1つの @Tool", "keyInsight": "ループは変わらない; 新ツールは @Tool と defaultTools() で登録", "coreAddition": "@Tool アノテーション + defaultTools()" },
+    "s03": { "title_local": "TodoWrite", "subtitle": "行動前に計画", "keyInsight": "計画のないエージェントは迷走する; まずステップを列挙してから実行", "coreAddition": "TodoManager + リマインダー" },
+    "s04": { "title_local": "サブエージェント", "subtitle": "サブタスクごとにクリーンなコンテキスト", "keyInsight": "サブエージェントは独立したメッセージリストを使用し、メイン会話をクリーンに保つ", "coreAddition": "独立コンテキストのサブエージェント" },
+    "s05": { "title_local": "スキル", "subtitle": "オンデマンドロード", "keyInsight": "必要な時にツール結果経由で知識を注入、システムプロンプトに事前に詰め込まない", "coreAddition": "SkillLoader + 二層注入" },
+    "s06": { "title_local": "コンテキスト圧縮", "subtitle": "三層圧縮戦略", "keyInsight": "コンテキストは必ず満杯になる; 三層圧縮戦略で無限セッションを実現", "coreAddition": "マイクロ圧縮 + 自動圧縮 + アーカイブ" },
+    "s07": { "title_local": "タスクシステム", "subtitle": "タスクグラフ + 依存関係", "keyInsight": "ファイルベースのタスクグラフ、順序付け・並列・依存をサポート -- マルチエージェント連携の基盤", "coreAddition": "ファイル永続化 TaskManager + 依存グラフ" },
+    "s08": { "title_local": "バックグラウンドタスク", "subtitle": "仮想スレッド + 通知", "keyInsight": "遅い操作はバックグラウンドへ; エージェントは次を考え続ける", "coreAddition": "BackgroundManager + 通知キュー" },
+    "s09": { "title_local": "エージェントチーム", "subtitle": "チームメイト + メールボックス", "keyInsight": "一人で終わらない時は永続チームメイトに非同期メールボックスで委託", "coreAddition": "TeammateManager + ファイルメールボックス" },
+    "s10": { "title_local": "チームプロトコル", "subtitle": "統一コミュニケーションルール", "keyInsight": "1つの request-response パターンが全てのチーム交渉を駆動", "coreAddition": "request_id 相関の2つのプロトコル" },
+    "s11": { "title_local": "自律エージェント", "subtitle": "ボードをスキャンしてタスクを認領", "keyInsight": "チームメイトが自分でボードをスキャンしてタスクを認領; リーダーの個別割り当て不要", "coreAddition": "タスクボードポーリング + タイムアウトベース自治" },
+    "s12": { "title_local": "Worktree 隔離", "subtitle": "各自のディレクトリで作業", "keyInsight": "各自独立ディレクトリ; タスクが目標を管理、worktreeがディレクトリを管理、IDで紐付け", "coreAddition": "構成可能なworktreeライフサイクル + イベントストリーム" }
   }
 }

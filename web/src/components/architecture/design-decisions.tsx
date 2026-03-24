@@ -24,8 +24,8 @@ interface Decision {
   title: string;
   description: string;
   alternatives: string;
-  zh?: { title: string; description: string };
-  ja?: { title: string; description: string };
+  zh?: { title: string; description: string; alternatives?: string };
+  ja?: { title: string; description: string; alternatives?: string };
 }
 
 interface AnnotationFile {
@@ -63,10 +63,11 @@ function DecisionCard({
   const t = useTranslations("version");
 
   const localized =
-    locale !== "en" ? (decision as unknown as Record<string, unknown>)[locale] as { title?: string; description?: string } | undefined : undefined;
+    locale !== "en" ? (decision as unknown as Record<string, unknown>)[locale] as { title?: string; description?: string; alternatives?: string } | undefined : undefined;
 
   const title = localized?.title || decision.title;
   const description = localized?.description || decision.description;
+  const alternatives = localized?.alternatives || decision.alternatives;
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
@@ -100,13 +101,13 @@ function DecisionCard({
                 {description}
               </p>
 
-              {decision.alternatives && (
+              {alternatives && (
                 <div className="mt-3">
                   <h4 className="text-xs font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                     {t("alternatives")}
                   </h4>
                   <p className="mt-1 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    {decision.alternatives}
+                    {alternatives}
                   </p>
                 </div>
               )}

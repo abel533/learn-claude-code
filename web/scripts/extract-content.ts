@@ -12,6 +12,7 @@ import { VERSION_META, VERSION_ORDER, LEARNING_PATH } from "../src/lib/constants
 const WEB_DIR = path.resolve(__dirname, "..");
 const REPO_ROOT = path.resolve(WEB_DIR, "..");
 const AGENTS_DIR = path.join(REPO_ROOT, "agents");
+const JAVA_SRC_DIR = path.join(REPO_ROOT, "src", "main", "java", "io", "mybatis", "learn");
 const DOCS_DIR = path.join(REPO_ROOT, "docs");
 const OUT_DIR = path.join(WEB_DIR, "src", "data", "generated");
 
@@ -91,12 +92,101 @@ function extractTools(source: string): string[] {
   return Array.from(tools);
 }
 
-// Count non-blank, non-comment lines
+// Extract classes/interfaces/records/enums from Java source
+function extractJavaClasses(
+  lines: string[]
+): { name: string; startLine: number; endLine: number }[] {
+  const classes: { name: string; startLine: number; endLine: number }[] = [];
+  const classPattern = /^(?:public\s+)?(?:class|interface|record|enum)\s+(\w+)/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(classPattern);
+    if (m) {
+      const name = m[1];
+      const startLine = i + 1;
+      let endLine = lines.length;
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].match(/^(?:public\s+)?(?:class|interface|record|enum)\s/)) {
+          endLine = j;
+          break;
+        }
+      }
+      classes.push({ name, startLine, endLine });
+    }
+  }
+  return classes;
+}
+
+// Extract methods from Java source (skipping constructors)
+function extractJavaMethods(
+  lines: string[]
+): { name: string; signature: string; startLine: number }[] {
+  const methods: { name: string; signature: string; startLine: number }[] = [];
+  const methodPattern =
+    /^\s+(?:(?:public|private|protected|static|default|abstract|final|synchronized|native)\s+)*(?:\w+(?:<[^>]*>)?(?:\[\])?)\s+(\w+)\s*\(/;
+
+  const classNames = new Set<string>();
+  const classPattern = /^(?:public\s+)?(?:class|interface|record|enum)\s+(\w+)/;
+  for (const line of lines) {
+    const m = line.match(classPattern);
+    if (m) classNames.add(m[1]);
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(methodPattern);
+    if (m) {
+      const name = m[1];
+      if (classNames.has(name)) continue;
+      const sig = lines[i].trim().replace(/\{?\s*$/, "").trim();
+      methods.push({ name, signature: sig, startLine: i + 1 });
+    }
+  }
+  return methods;
+}
+
+// Extract tool names from Java @Tool annotations
+function extractJavaTools(lines: string[]): string[] {
+  const tools: string[] = [];
+  const toolAnnotation = /^\s*@Tool\b/;
+  const methodPattern =
+    /^\s+(?:(?:public|private|protected|static|default|abstract|final|synchronized|native)\s+)*(?:\w+(?:<[^>]*>)?(?:\[\])?)\s+(\w+)\s*\(/;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (toolAnnotation.test(lines[i])) {
+      for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+        const m = lines[j].match(methodPattern);
+        if (m) {
+          tools.push(m[1]);
+          break;
+        }
+      }
+    }
+  }
+  return tools;
+}
+
+// Count non-blank, non-comment lines (supports Python # and Java // /* */ comments)
 function countLoc(lines: string[]): number {
-  return lines.filter((line) => {
+  let inBlockComment = false;
+  let count = 0;
+  for (const line of lines) {
     const trimmed = line.trim();
-    return trimmed !== "" && !trimmed.startsWith("#");
-  }).length;
+    if (trimmed === "") continue;
+
+    if (inBlockComment) {
+      if (trimmed.includes("*/")) inBlockComment = false;
+      continue;
+    }
+    if (trimmed.startsWith("/*")) {
+      if (!trimmed.includes("*/")) inBlockComment = true;
+      continue;
+    }
+
+    if (trimmed.startsWith("#") || trimmed.startsWith("//")) continue;
+
+    count++;
+  }
+  return count;
 }
 
 // Detect locale from subdirectory path
@@ -119,58 +209,114 @@ function extractDocVersion(filename: string): string | null {
 function main() {
   console.log("Extracting content from agents and docs...");
   console.log(`  Repo root: ${REPO_ROOT}`);
-  console.log(`  Agents dir: ${AGENTS_DIR}`);
+  console.log(`  Java src dir: ${JAVA_SRC_DIR}`);
+  console.log(`  Agents dir (fallback): ${AGENTS_DIR}`);
   console.log(`  Docs dir: ${DOCS_DIR}`);
 
-  // Skip extraction if source directories don't exist (e.g. Vercel build).
-  // Pre-committed generated data will be used instead.
-  if (!fs.existsSync(AGENTS_DIR)) {
-    console.log("  Agents directory not found, skipping extraction.");
+  const versions: AgentVersion[] = [];
+  const useJava = fs.existsSync(JAVA_SRC_DIR);
+
+  if (useJava) {
+    // 1. Read Java sources from s01~s12 + full subdirectories
+    const subdirs = fs
+      .readdirSync(JAVA_SRC_DIR)
+      .filter((d) => /^s\d+$/.test(d) || d === "full")
+      .filter((d) => fs.statSync(path.join(JAVA_SRC_DIR, d)).isDirectory());
+
+    console.log(`  Found ${subdirs.length} Java lesson directories`);
+
+    for (const dir of subdirs) {
+      const versionId = dir;
+      const dirPath = path.join(JAVA_SRC_DIR, dir);
+      const javaFiles = fs.readdirSync(dirPath).filter((f) => f.endsWith(".java"));
+      if (javaFiles.length === 0) continue;
+
+      // 主类文件排在最前（如 S01AgentLoop.java）
+      const mainPrefix = dir === "full" ? "SFull" : "S" + dir.substring(1);
+      javaFiles.sort((a, b) => {
+        const aMain = a.startsWith(mainPrefix) ? 0 : 1;
+        const bMain = b.startsWith(mainPrefix) ? 0 : 1;
+        if (aMain !== bMain) return aMain - bMain;
+        return a.localeCompare(b);
+      });
+      const mainFile = javaFiles[0];
+
+      // 拼接目录下所有 Java 文件，文件间用分隔符标记
+      const sourceParts: string[] = [];
+      for (const jf of javaFiles) {
+        const content = fs.readFileSync(path.join(dirPath, jf), "utf-8");
+        sourceParts.push(`// === ${jf} ===\n${content}`);
+      }
+      const source = sourceParts.join("\n\n");
+      const lines = source.split("\n");
+
+      const meta = VERSION_META[versionId];
+      const classes = extractJavaClasses(lines);
+      const methods = extractJavaMethods(lines);
+      const tools = extractJavaTools(lines);
+      const loc = countLoc(lines);
+
+      versions.push({
+        id: versionId,
+        filename: mainFile,
+        title: meta?.title ?? versionId,
+        subtitle: meta?.subtitle ?? "",
+        loc,
+        tools,
+        newTools: [],
+        coreAddition: meta?.coreAddition ?? "",
+        keyInsight: meta?.keyInsight ?? "",
+        classes,
+        functions: methods,
+        layer: meta?.layer ?? "tools",
+        source,
+      });
+    }
+  } else if (fs.existsSync(AGENTS_DIR)) {
+    // 回退：从 agents/ 目录读取 Python 源码
+    const agentFiles = fs
+      .readdirSync(AGENTS_DIR)
+      .filter((f) => f.startsWith("s") && f.endsWith(".py"));
+
+    console.log(`  Found ${agentFiles.length} agent files (Python fallback)`);
+
+    for (const filename of agentFiles) {
+      const versionId = filenameToVersionId(filename);
+      if (!versionId) {
+        console.warn(`  Skipping ${filename}: could not determine version ID`);
+        continue;
+      }
+
+      const filePath = path.join(AGENTS_DIR, filename);
+      const source = fs.readFileSync(filePath, "utf-8");
+      const lines = source.split("\n");
+
+      const meta = VERSION_META[versionId];
+      const classes = extractClasses(lines);
+      const functions = extractFunctions(lines);
+      const tools = extractTools(source);
+      const loc = countLoc(lines);
+
+      versions.push({
+        id: versionId,
+        filename,
+        title: meta?.title ?? versionId,
+        subtitle: meta?.subtitle ?? "",
+        loc,
+        tools,
+        newTools: [],
+        coreAddition: meta?.coreAddition ?? "",
+        keyInsight: meta?.keyInsight ?? "",
+        classes,
+        functions,
+        layer: meta?.layer ?? "tools",
+        source,
+      });
+    }
+  } else {
+    console.log("  Source directories not found, skipping extraction.");
     console.log("  Using pre-committed generated data.");
     return;
-  }
-
-  // 1. Read all agent files
-  const agentFiles = fs
-    .readdirSync(AGENTS_DIR)
-    .filter((f) => f.startsWith("s") && f.endsWith(".py"));
-
-  console.log(`  Found ${agentFiles.length} agent files`);
-
-  const versions: AgentVersion[] = [];
-
-  for (const filename of agentFiles) {
-    const versionId = filenameToVersionId(filename);
-    if (!versionId) {
-      console.warn(`  Skipping ${filename}: could not determine version ID`);
-      continue;
-    }
-
-    const filePath = path.join(AGENTS_DIR, filename);
-    const source = fs.readFileSync(filePath, "utf-8");
-    const lines = source.split("\n");
-
-    const meta = VERSION_META[versionId];
-    const classes = extractClasses(lines);
-    const functions = extractFunctions(lines);
-    const tools = extractTools(source);
-    const loc = countLoc(lines);
-
-    versions.push({
-      id: versionId,
-      filename,
-      title: meta?.title ?? versionId,
-      subtitle: meta?.subtitle ?? "",
-      loc,
-      tools,
-      newTools: [], // computed after all versions are loaded
-      coreAddition: meta?.coreAddition ?? "",
-      keyInsight: meta?.keyInsight ?? "",
-      classes,
-      functions,
-      layer: meta?.layer ?? "tools",
-      source,
-    });
   }
 
   // Sort versions according to VERSION_ORDER

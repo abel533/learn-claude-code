@@ -19,7 +19,7 @@ export async function generateMetadata({
   params: Promise<{ locale: string }>;
 }): Promise<Metadata> {
   const { locale } = await params;
-  const messages = metaMessages[locale] || metaMessages.en;
+  const messages = metaMessages[locale] || metaMessages.zh;
   return {
     title: messages.meta?.title || "Learn Claude Code",
     description: messages.meta?.description || "Build an AI coding agent from scratch, one concept at a time",

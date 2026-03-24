@@ -1,18 +1,18 @@
-# s11: Autonomous Agents
+# s11: Autonomous Agents (自律エージェント)
 
 `s01 > s02 > s03 > s04 > s05 > s06 | s07 > s08 > s09 > s10 > [ s11 ] s12`
 
-> *"チームメイトが自らボードを見て、仕事を取る"* -- リーダーが逐一割り振る必要はない。
+> *"チームメイトが自らボードを見て、仕事を取る"* -- リーダーが逐一割り振る必要はない、自己組織化。
 >
 > **Harness 層**: 自律 -- 指示なしで仕事を見つけるモデル。
 
 ## 問題
 
-s09-s10では、チームメイトは明示的に指示された時のみ作業する。リーダーは各チームメイトを特定のプロンプトでspawnしなければならない。タスクボードに未割り当てのタスクが10個あっても、リーダーが手動で各タスクを割り当てる。これはスケールしない。
+s09-s10 では、チームメイトは明示的に指示された時のみ作業する。リーダーは各チームメイトにプロンプトを書き、タスクボード上の10個の未割り当てタスクを手動で割り当てる。これはスケールしない。
 
-真の自律性とは、チームメイトが自分で作業を見つけること: タスクボードをスキャンし、未確保のタスクを確保し、作業し、完了したら次を探す。
+真の自律性: チームメイトが自分でタスクボードをスキャンし、未確保のタスクを確保し、完了したら次を探す。
 
-もう1つの問題: コンテキスト圧縮(s06)後にエージェントが自分の正体を忘れる可能性がある。アイデンティティ再注入がこれを解決する。
+もう1つの問題: コンテキスト圧縮 (s06) 後にエージェントが自分の正体を忘れる可能性がある。アイデンティティ再注入がこれを解決する。
 
 ## 解決策
 
@@ -40,103 +40,154 @@ Teammate lifecycle with idle cycle:
     |
     +---> 60s timeout ----------------------> SHUTDOWN
 
-Identity re-injection after compression:
-  if len(messages) <= 3:
-    messages.insert(0, identity_block)
+Identity via system prompt (always present):
+  ChatClient.builder(chatModel)
+      .defaultSystem(identityPrompt)  // 毎回の呼び出しで自動付与
 ```
 
 ## 仕組み
 
-1. チームメイトのループはWORKとIDLEの2フェーズ。LLMがツール呼び出しを止めた時(または`idle`ツールを呼んだ時)、IDLEフェーズに入る。
+1. チームメイトのループは WORK と IDLE の2フェーズ。LLM がツール呼び出しを止めた時（または `idle` ツールを呼んだ時）、IDLE フェーズに入る。
 
-```python
-def _loop(self, name, role, prompt):
-    while True:
-        # -- WORK PHASE --
-        messages = [{"role": "user", "content": prompt}]
-        for _ in range(50):
-            response = client.messages.create(...)
-            if response.stop_reason != "tool_use":
-                break
-            # execute tools...
-            if idle_requested:
-                break
+```java
+// src/main/java/io/mybatis/learn/s11/S11AutonomousAgents.java
+// AutonomousTeammateManager.autonomousLoop()
 
-        # -- IDLE PHASE --
-        self._set_status(name, "idle")
-        resume = self._idle_poll(name, messages)
-        if not resume:
-            self._set_status(name, "shutdown")
-            return
-        self._set_status(name, "working")
+private void autonomousLoop(String name, String role, String initialPrompt) {
+    // idle フラグ: ツール呼び出し時に設定、外部ループが検出
+    AtomicBoolean idleRequested = new AtomicBoolean(false);
+    var idleTool = new IdleTool(idleRequested);
+
+    ChatClient client = ChatClient.builder(chatModel)
+            .defaultSystem(sysPrompt)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(),
+                    messageTool, protocolTool, idleTool, claimTool)
+            .build();
+
+    while (true) {
+        // -- WORK PHASE --
+        String nextMsg = initialPrompt;
+        for (int round = 0; round < 50 && nextMsg != null; round++) {
+            var inbox = bus.readInbox(name);
+            // ... インボックスメッセージを nextMsg にマージ ...
+            idleRequested.set(false);
+            String response = client.prompt(sb.toString()).call().content();
+            if (idleRequested.get()) break;  // idle ツールが呼ばれた
+            nextMsg = null;  // 以降のラウンドは inbox 駆動
+        }
+
+        // -- IDLE PHASE --
+        setStatus(name, "idle");
+        // ... インボックス + タスクボードをポーリング（下記参照） ...
+        if (!resume) { setStatus(name, "shutdown"); return; }
+        setStatus(name, "working");
+    }
+}
 ```
 
-2. IDLEフェーズがインボックスとタスクボードをポーリングする。
+2. IDLE フェーズがインボックスとタスクボードをポーリングする。
 
-```python
-def _idle_poll(self, name, messages):
-    for _ in range(IDLE_TIMEOUT // POLL_INTERVAL):  # 60s / 5s = 12
-        time.sleep(POLL_INTERVAL)
-        inbox = BUS.read_inbox(name)
-        if inbox:
-            messages.append({"role": "user",
-                "content": f"<inbox>{inbox}</inbox>"})
-            return True
-        unclaimed = scan_unclaimed_tasks()
-        if unclaimed:
-            claim_task(unclaimed[0]["id"], name)
-            messages.append({"role": "user",
-                "content": f"<auto-claimed>Task #{unclaimed[0]['id']}: "
-                           f"{unclaimed[0]['subject']}</auto-claimed>"})
-            return True
-    return False  # timeout -> shutdown
+```java
+// IDLE PHASE: インボックス + タスクボードをポーリング
+setStatus(name, "idle");
+boolean resume = false;
+int polls = IDLE_TIMEOUT / Math.max(POLL_INTERVAL, 1);  // 60/5 = 12
+
+for (int p = 0; p < polls; p++) {
+    Thread.sleep(POLL_INTERVAL * 1000L);
+
+    // インボックスをチェック
+    var inbox = bus.readInbox(name);
+    if (!inbox.isEmpty()) {
+        initialPrompt = "<inbox>" + mapper.writeValueAsString(inbox) + "</inbox>";
+        resume = true;
+        break;
+    }
+
+    // タスクボードをスキャン
+    var unclaimed = scanUnclaimedTasks(tasksDir);
+    if (!unclaimed.isEmpty()) {
+        var task = unclaimed.get(0);
+        int taskId = ((Number) task.get("id")).intValue();
+        claimTask(tasksDir, taskId, name);
+        initialPrompt = String.format(
+                "<auto-claimed>Task #%d: %s\n%s</auto-claimed>",
+                taskId, task.get("subject"),
+                task.getOrDefault("description", ""));
+        resume = true;
+        break;
+    }
+}
+
+if (!resume) { setStatus(name, "shutdown"); return; }
+setStatus(name, "working");
 ```
 
-3. タスクボードスキャン: pendingかつ未割り当てかつブロックされていないタスクを探す。
+3. タスクボードスキャン: pending ステータスかつ owner なしかつブロックされていないタスクを探す。
 
-```python
-def scan_unclaimed_tasks() -> list:
-    unclaimed = []
-    for f in sorted(TASKS_DIR.glob("task_*.json")):
-        task = json.loads(f.read_text())
-        if (task.get("status") == "pending"
-                and not task.get("owner")
-                and not task.get("blockedBy")):
-            unclaimed.append(task)
-    return unclaimed
+```java
+static List<Map<String, Object>> scanUnclaimedTasks(Path tasksDir) {
+    if (!Files.exists(tasksDir)) return List.of();
+    List<Map<String, Object>> unclaimed = new ArrayList<>();
+    ObjectMapper mapper = new ObjectMapper();
+    try (var files = Files.list(tasksDir)) {
+        files.filter(f -> f.getFileName().toString().startsWith("task_")
+                       && f.getFileName().toString().endsWith(".json"))
+             .sorted()
+             .forEach(f -> {
+                 Map<String, Object> task = mapper.readValue(f.toFile(), Map.class);
+                 if ("pending".equals(task.get("status"))
+                     && (task.get("owner") == null || "".equals(task.get("owner")))
+                     && (task.get("blockedBy") == null
+                         || ((List<?>) task.get("blockedBy")).isEmpty())) {
+                     unclaimed.add(task);
+                 }
+             });
+    }
+    return unclaimed;
+}
 ```
 
-4. アイデンティティ再注入: コンテキストが短すぎる(圧縮が起きた)場合にアイデンティティブロックを挿入する。
+4. アイデンティティ保持: Java/Spring AI の `ChatClient.defaultSystem()` は毎回の呼び出しで自動的にシステムプロンプトを付与するため、アイデンティティ情報は常に存在する。Python 版のように圧縮後に手動で再注入する必要はない。
 
-```python
-if len(messages) <= 3:
-    messages.insert(0, {"role": "user",
-        "content": f"<identity>You are '{name}', role: {role}, "
-                   f"team: {team_name}. Continue your work.</identity>"})
-    messages.insert(1, {"role": "assistant",
-        "content": f"I am {name}. Continuing."})
+```java
+// アイデンティティ情報は defaultSystem で構築時に注入、毎回の prompt で自動付与
+String sysPrompt = String.format(
+        "You are '%s', role: %s, team: %s, at %s. "
+        + "Use idle tool when you have no more work. You will auto-claim new tasks.",
+        name, role, teamName, workDir);
+
+ChatClient client = ChatClient.builder(chatModel)
+        .defaultSystem(sysPrompt)  // アイデンティティは常にシステムプロンプトに存在
+        .defaultTools(new BashTool(), new ReadFileTool(),
+                new WriteFileTool(), new EditFileTool(),
+                messageTool, protocolTool, idleTool, claimTool)
+        .build();
 ```
 
-## s10からの変更点
+## s10 からの変更点
 
-| Component      | Before (s10)     | After (s11)                |
-|----------------|------------------|----------------------------|
-| Tools          | 12               | 14 (+idle, +claim_task)    |
-| Autonomy       | Lead-directed    | Self-organizing            |
-| Idle phase     | None             | Poll inbox + task board    |
-| Task claiming  | Manual only      | Auto-claim unclaimed tasks |
-| Identity       | System prompt    | + re-injection after compress|
-| Timeout        | None             | 60s idle -> auto shutdown  |
+| コンポーネント   | 変更前 (s10)     | 変更後 (s11)                     |
+|----------------|------------------|----------------------------------|
+| Tools          | 12               | 14 (+idle, +claim_task)          |
+| 自律性         | リーダー指示     | 自己組織化                       |
+| IDLE フェーズ   | なし             | インボックス + タスクボードをポーリング |
+| タスク確保     | 手動のみ         | 未割り当てタスクの自動確保        |
+| アイデンティティ | システムプロンプト | + 圧縮後の再注入                 |
+| タイムアウト    | なし             | 60秒 IDLE → 自動シャットダウン    |
 
 ## 試してみる
 
 ```sh
 cd learn-claude-code
-python agents/s11_autonomous_agents.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s11.S11AutonomousAgents
 ```
+
+以下のプロンプトを試してみよう (英語プロンプトの方が LLM に効果的だが、日本語でも可):
 
 1. `Create 3 tasks on the board, then spawn alice and bob. Watch them auto-claim.`
 2. `Spawn a coder teammate and let it find work from the task board itself`
 3. `Create tasks with dependencies. Watch teammates respect the blocked order.`
-4. `/tasks`と入力してオーナー付きのタスクボードを確認する
-5. `/team`と入力して誰が作業中でアイドルかを監視する
+4. `/tasks` と入力して owner 付きのタスクボードを確認する
+5. `/team` と入力して誰が作業中でアイドルかを監視する

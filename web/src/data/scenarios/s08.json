@@ -15,13 +15,13 @@
     },
     {
       "type": "tool_call",
-      "content": "pytest tests/ -v --timeout=300",
+      "content": "mvn test -Dsurefire.timeout=300",
       "toolName": "background_task",
       "annotation": "BackgroundManager spawns a thread for long-running test suite"
     },
     {
       "type": "system_event",
-      "content": "[BackgroundManager] Thread spawned: task_001\nRunning: pytest tests/ -v --timeout=300\nStatus: in_progress",
+      "content": "[BackgroundManager] Thread spawned: task_001\nRunning: mvn test -Dsurefire.timeout=300\nStatus: in_progress",
       "annotation": "Thread is running independently -- main loop continues"
     },
     {
@@ -32,24 +32,24 @@
     },
     {
       "type": "tool_call",
-      "content": "ruff check --fix .",
+      "content": "mvn spotbugs:check",
       "toolName": "bash",
-      "annotation": "Agent works on linting while tests run in background"
+      "annotation": "Agent works on static analysis while tests run in background"
     },
     {
       "type": "tool_result",
-      "content": "Fixed 12 linting errors in 5 files",
+      "content": "Fixed 12 issues in 5 files",
       "toolName": "bash",
-      "annotation": "Linting fixed concurrently with tests"
+      "annotation": "Static analysis fixed concurrently with tests"
     },
     {
       "type": "system_event",
-      "content": "[Notification] Background task_001 completed\nResult: 47 tests passed, 2 failed\nFailed: test_auth.py::test_token_expiry, test_api.py::test_rate_limit",
+      "content": "[Notification] Background task_001 completed\nResult: 47 tests passed, 2 failed\nFailed: AuthTest::testTokenExpiry, ApiTest::testRateLimit",
       "annotation": "Background thread notifies main loop via notification queue"
     },
     {
       "type": "assistant_text",
-      "content": "Linting is fixed. Tests finished: 47 passed, 2 failed. I'll fix the failing tests now.",
+      "content": "Static analysis is fixed. Tests finished: 47 passed, 2 failed. I'll fix the failing tests now.",
       "annotation": "Non-blocking execution via threads + queue enables parallel work"
     }
   ]

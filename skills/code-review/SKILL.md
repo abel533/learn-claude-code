@@ -17,14 +17,14 @@ Check for:
 - [ ] **Authorization flaws**: Missing access controls, IDOR
 - [ ] **Data exposure**: Sensitive data in logs, error messages
 - [ ] **Cryptography**: Weak algorithms, improper key management
-- [ ] **Dependencies**: Known vulnerabilities (check with `npm audit`, `pip-audit`)
+- [ ] **Dependencies**: Known vulnerabilities (check with `mvn dependency-check:check`, `npm audit`)
 
 ```bash
 # Quick security scans
+mvn dependency-check:check   # Java (OWASP Dependency-Check)
+mvn versions:display-dependency-updates  # Check outdated deps
 npm audit                    # Node.js
-pip-audit                    # Python
-cargo audit                  # Rust
-grep -r "password\|secret\|api_key" --include="*.py" --include="*.js"
+grep -r "password\|secret\|api_key" --include="*.java" --include="*.properties" --include="*.yml"
 ```
 
 ### 2. Correctness
@@ -89,23 +89,27 @@ Check for:
 
 ## Common Patterns to Flag
 
-### Python
-```python
-# Bad: SQL injection
-cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")
-# Good:
-cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+### Java
+```java
+// Bad: SQL injection
+Statement stmt = conn.createStatement();
+stmt.executeQuery("SELECT * FROM users WHERE id = " + userId);
+// Good: 使用 PreparedStatement 参数化查询
+PreparedStatement ps = conn.prepareStatement("SELECT * FROM users WHERE id = ?");
+ps.setLong(1, userId);
+ResultSet rs = ps.executeQuery();
 
-# Bad: Command injection
-os.system(f"ls {user_input}")
-# Good:
-subprocess.run(["ls", user_input], check=True)
+// Bad: Command injection
+Runtime.getRuntime().exec("ls " + userInput);
+// Good: 使用 ProcessBuilder 分离命令和参数
+new ProcessBuilder("ls", userInput).start();
 
-# Bad: Mutable default argument
-def append(item, lst=[]):  # Bug: shared mutable default
-# Good:
-def append(item, lst=None):
-    lst = lst or []
+// Bad: 未关闭资源
+InputStream is = new FileInputStream("data.txt");
+// Good: 使用 try-with-resources 自动关闭
+try (InputStream is = new FileInputStream("data.txt")) {
+    // ...
+}
 ```
 
 ### JavaScript/TypeScript
@@ -136,14 +140,15 @@ git log --oneline -10
 
 # Find potential issues
 grep -rn "TODO\|FIXME\|HACK\|XXX" .
-grep -rn "password\|secret\|token" . --include="*.py"
+grep -rn "password\|secret\|token" . --include="*.java" --include="*.properties"
 
-# Check complexity (Python)
-pip install radon && radon cc . -a
+# Check complexity (Java)
+mvn pmd:pmd                  # 静态代码分析
+mvn spotbugs:check           # Bug 检测
 
 # Check dependencies
-npm outdated  # Node
-pip list --outdated  # Python
+mvn versions:display-dependency-updates    # 检查过期依赖
+mvn dependency-check:check                 # OWASP 安全扫描
 ```
 
 ## Review Workflow

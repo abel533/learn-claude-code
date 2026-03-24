@@ -8,7 +8,7 @@
 
 ## 问题
 
-到 s11, 智能体已经能自主认领和完成任务。但所有任务共享一个目录。两个智能体同时重构不同模块 -- A 改 `config.py`, B 也改 `config.py`, 未提交的改动互相污染, 谁也没法干净回滚。
+到 s11, 智能体已经能自主认领和完成任务。但所有任务共享一个目录。两个智能体同时重构不同模块 -- A 改 `Config.java`, B 也改 `Config.java`, 未提交的改动互相污染, 谁也没法干净回滚。
 
 任务板管 "做什么" 但不管 "在哪做"。解法: 给每个任务一个独立的 git worktree 目录, 用任务 ID 把两边关联起来。
 
@@ -38,48 +38,71 @@ State machines:
 
 1. **创建任务。** 先把目标持久化。
 
-```python
-TASKS.create("Implement auth refactor")
-# -> .tasks/task_1.json  status=pending  worktree=""
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeTaskManager.java
+tasks.create("Implement auth refactor", "");
+// -> .tasks/task_1.json  status=pending  worktree=""
 ```
 
 2. **创建 worktree 并绑定任务。** 传入 `task_id` 自动将任务推进到 `in_progress`。
 
-```python
-WORKTREES.create("auth-refactor", task_id=1)
-# -> git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD
-# -> index.json gets new entry, task_1.json gets worktree="auth-refactor"
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeManager.java
+worktrees.create("auth-refactor", 1, "HEAD");
+// -> git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD
+// -> index.json gets new entry, task_1.json gets worktree="auth-refactor"
 ```
 
 绑定同时写入两侧状态:
 
-```python
-def bind_worktree(self, task_id, worktree):
-    task = self._load(task_id)
-    task["worktree"] = worktree
-    if task["status"] == "pending":
-        task["status"] = "in_progress"
-    self._save(task)
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeTaskManager.java
+public String bindWorktree(int taskId, String worktree, String owner) {
+    var task = load(taskId);
+    task.put("worktree", worktree);
+    if (owner != null && !owner.isEmpty()) task.put("owner", owner);
+    if ("pending".equals(task.get("status"))) task.put("status", "in_progress");
+    task.put("updated_at", System.currentTimeMillis() / 1000.0);
+    save(task);
+    return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(task);
+}
 ```
 
 3. **在 worktree 中执行命令。** `cwd` 指向隔离目录。
 
-```python
-subprocess.run(command, shell=True, cwd=worktree_path,
-               capture_output=True, text=True, timeout=300)
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeManager.java - run()
+boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+ProcessBuilder pb = isWindows
+        ? new ProcessBuilder("cmd", "/c", command)
+        : new ProcessBuilder("sh", "-c", command);
+pb.directory(path.toFile());
+pb.redirectErrorStream(true);
+Process p = pb.start();
+String out = new String(p.getInputStream().readAllBytes()).trim();
+boolean finished = p.waitFor(300, java.util.concurrent.TimeUnit.SECONDS);
 ```
 
 4. **收尾。** 两种选择:
    - `worktree_keep(name)` -- 保留目录供后续使用。
    - `worktree_remove(name, complete_task=True)` -- 删除目录, 完成绑定任务, 发出事件。一个调用搞定拆除 + 完成。
 
-```python
-def remove(self, name, force=False, complete_task=False):
-    self._run_git(["worktree", "remove", wt["path"]])
-    if complete_task and wt.get("task_id") is not None:
-        self.tasks.update(wt["task_id"], status="completed")
-        self.tasks.unbind_worktree(wt["task_id"])
-        self.events.emit("task.completed", ...)
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeManager.java
+public String remove(String name, boolean force, boolean completeTask) {
+    var wt = findWorktree(name);
+    events.emit("worktree.remove.before", ...);
+    runGit("worktree", "remove", wt.get("path").toString());
+    if (completeTask && wt.get("task_id") != null) {
+        int taskId = ((Number) wt.get("task_id")).intValue();
+        tasks.update(taskId, "completed", null);
+        tasks.unbindWorktree(taskId);
+        events.emit("task.completed",
+                Map.of("id", taskId, "status", "completed"),
+                Map.of("name", name), null);
+    }
+    // 更新 index.json: status -> "removed"
+}
 ```
 
 5. **事件流。** 每个生命周期步骤写入 `.worktrees/events.jsonl`:
@@ -111,7 +134,7 @@ def remove(self, name, force=False, complete_task=False):
 
 ```sh
 cd learn-claude-code
-python agents/s12_worktree_task_isolation.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s12.S12WorktreeIsolation
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):

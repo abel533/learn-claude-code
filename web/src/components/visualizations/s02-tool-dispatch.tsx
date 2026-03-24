@@ -66,12 +66,12 @@ const REQUEST_PER_STEP: (string | null)[] = [
 
 // Step annotations
 const STEP_INFO = [
-  { title: "The Dispatch Map", desc: "A dictionary maps tool names to handler functions. The loop code never changes." },
-  { title: "Route: bash", desc: "tool_call.name -> handlers['bash'](input). Name-based routing." },
-  { title: "Route: read_file", desc: "Same pattern, different handler. Validate input, execute, return result." },
-  { title: "Route: write_file", desc: "Every tool returns a tool_result that goes back into messages[]." },
-  { title: "Route: edit_file", desc: "Adding a new tool = adding one entry to the dispatch map." },
-  { title: "The Key Insight", desc: "The while loop stays the same. You only grow the dispatch map. That's it." },
+  { title: "The @Tool Registry", desc: "@Tool annotated methods are registered via defaultTools(). The loop code never changes." },
+  { title: "Route: bash", desc: "ChatClient detects tool_call → invokes @Tool method. Name-based routing." },
+  { title: "Route: read_file", desc: "Same pattern, different @Tool method. Validate input, execute, return result." },
+  { title: "Route: write_file", desc: "Every @Tool returns a result that Spring AI feeds back to the model." },
+  { title: "Route: edit_file", desc: "Adding a new tool = adding one @Tool annotated class to defaultTools()." },
+  { title: "The Key Insight", desc: "The call() loop stays the same. You only grow the @Tool registry. That's it." },
 ];
 
 // SVG layout constants

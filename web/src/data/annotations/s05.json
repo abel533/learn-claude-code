@@ -8,25 +8,29 @@
       "alternatives": "Injecting skills into the system prompt is simpler and gives skills higher priority in the model's attention. But it breaks prompt caching (every skill load creates a new system prompt variant) and bloats the system prompt over time as skills accumulate. The tool_result approach keeps things cache-friendly at the cost of slightly lower attention priority.",
       "zh": {
         "title": "技能通过 tool_result 注入，而非系统提示词",
-        "description": "当 agent 调用 Skill 工具时，技能内容（SKILL.md 文件）作为 tool_result 在用户消息中返回，而非注入系统提示词。这是一个刻意的缓存优化：系统提示词在各轮次间保持静态，API 提供商可以缓存它（Anthropic 的 prompt caching、OpenAI 的 system message caching）。如果技能内容在系统提示词中，每次加载新技能都会使缓存失效。将动态内容放在 tool_result 中，既保持了昂贵的系统提示词可缓存，又让技能知识进入了上下文。"
+        "description": "当 agent 调用 Skill 工具时，技能内容（SKILL.md 文件）作为 tool_result 在用户消息中返回，而非注入系统提示词。这是一个刻意的缓存优化：系统提示词在各轮次间保持静态，API 提供商可以缓存它（Anthropic 的 prompt caching、OpenAI 的 system message caching）。如果技能内容在系统提示词中，每次加载新技能都会使缓存失效。将动态内容放在 tool_result 中，既保持了昂贵的系统提示词可缓存，又让技能知识进入了上下文。",
+        "alternatives": "将技能注入系统提示词更简单，能给予技能更高的模型注意力优先级。但它会破坏 prompt 缓存（每次加载技能都会创建新的系统提示词变体），且随着技能累积，系统提示词会不断膨胀。tool_result 方式以略低的注意力优先级为代价，保持了缓存友好性。"
       },
       "ja": {
         "title": "スキルはシステムプロンプトではなく tool_result で注入",
-        "description": "エージェントが Skill ツールを呼び出すと、スキルの内容（SKILL.md ファイル）はシステムプロンプトへの注入ではなく、ユーザーメッセージ内の tool_result として返されます。これは意図的なキャッシュ最適化です：システムプロンプトはターン間で静的に保たれるため、API プロバイダーがキャッシュできます（Anthropic のプロンプトキャッシュ、OpenAI のシステムメッセージキャッシュ）。スキル内容がシステムプロンプト内にあると、新しいスキルをロードするたびにキャッシュが無効化されます。動的コンテンツを tool_result に配置することで、高コストなシステムプロンプトのキャッシュ可能性を維持しつつ、スキル知識をコンテキストに取り込めます。"
+        "description": "エージェントが Skill ツールを呼び出すと、スキルの内容（SKILL.md ファイル）はシステムプロンプトへの注入ではなく、ユーザーメッセージ内の tool_result として返されます。これは意図的なキャッシュ最適化です：システムプロンプトはターン間で静的に保たれるため、API プロバイダーがキャッシュできます（Anthropic のプロンプトキャッシュ、OpenAI のシステムメッセージキャッシュ）。スキル内容がシステムプロンプト内にあると、新しいスキルをロードするたびにキャッシュが無効化されます。動的コンテンツを tool_result に配置することで、高コストなシステムプロンプトのキャッシュ可能性を維持しつつ、スキル知識をコンテキストに取り込めます。",
+        "alternatives": "スキルをシステムプロンプトに注入する方がシンプルで、モデルの注意においてスキルに高い優先度を与えます。しかしプロンプトキャッシュが壊れ（スキルをロードするたびに新しいシステムプロンプトバリアントが作られ）、スキルが蓄積するにつれシステムプロンプトが肥大化します。tool_result アプローチはわずかに低い注意優先度と引き換えに、キャッシュフレンドリーを維持します。"
       }
     },
     {
       "id": "lazy-loading",
       "title": "On-Demand Skill Loading Instead of Upfront",
-      "description": "Skills are not loaded at startup. The agent starts with only the skill names and descriptions (from frontmatter). When the agent decides it needs a specific skill, it calls the Skill tool, which loads the full SKILL.md body into context. This keeps the initial prompt small and focused. An agent solving a Python bug doesn't need the Kubernetes deployment skill loaded -- that would waste context window space and potentially confuse the model with irrelevant instructions.",
+      "description": "Skills are not loaded at startup. The agent starts with only the skill names and descriptions (from frontmatter). When the agent decides it needs a specific skill, it calls the Skill tool, which loads the full SKILL.md body into context. This keeps the initial prompt small and focused. An agent solving a Spring Boot bug doesn't need the Kubernetes deployment skill loaded -- that would waste context window space and potentially confuse the model with irrelevant instructions.",
       "alternatives": "Loading all skills upfront guarantees the model always has all knowledge available, but wastes tokens on irrelevant skills and may hit context limits. A recommendation system (model suggests skills, human approves) adds latency. Lazy loading lets the model self-serve the knowledge it needs, when it needs it.",
       "zh": {
         "title": "按需加载技能而非预加载",
-        "description": "技能不会在启动时加载。Agent 初始只拥有技能名称和描述（来自 frontmatter）。当 agent 判断需要特定技能时，调用 Skill 工具将完整的 SKILL.md 内容加载到上下文中。这保持了初始提示词的精简。一个正在修复 Python bug 的 agent 不需要加载 Kubernetes 部署技能——那会浪费上下文窗口空间，还可能用无关指令干扰模型。"
+        "description": "技能不会在启动时加载。Agent 初始只拥有技能名称和描述（来自 frontmatter）。当 agent 判断需要特定技能时，调用 Skill 工具将完整的 SKILL.md 内容加载到上下文中。这保持了初始提示词的精简。一个正在修复 Spring Boot bug 的 agent 不需要加载 Kubernetes 部署技能——那会浪费上下文窗口空间，还可能用无关指令干扰模型。",
+        "alternatives": "预加载所有技能可以保证模型始终拥有全部知识，但会在无关技能上浪费 token 并可能达到上下文限制。推荐系统（模型建议技能，人类审批）会增加延迟。懒加载让模型在需要时自助获取所需知识。"
       },
       "ja": {
         "title": "起動時ではなくオンデマンドでスキルを読み込み",
-        "description": "スキルは起動時に読み込まれません。エージェントは最初、スキルの名前と説明（フロントマターから）のみを持ちます。エージェントが特定のスキルが必要だと判断すると、Skill ツールを呼び出して完全な SKILL.md の内容をコンテキストに読み込みます。これにより初期プロンプトを小さく保ちます。Python のバグを修正しているエージェントに Kubernetes デプロイのスキルは不要です――コンテキストウィンドウの無駄遣いであり、無関係な指示でモデルを混乱させかねません。"
+        "description": "スキルは起動時に読み込まれません。エージェントは最初、スキルの名前と説明（フロントマターから）のみを持ちます。エージェントが特定のスキルが必要だと判断すると、Skill ツールを呼び出して完全な SKILL.md の内容をコンテキストに読み込みます。これにより初期プロンプトを小さく保ちます。Spring Boot のバグを修正しているエージェントに Kubernetes デプロイのスキルは不要です――コンテキストウィンドウの無駄遣いであり、無関係な指示でモデルを混乱させかねません。",
+        "alternatives": "全スキルの事前読み込みはモデルが常に全知識を利用可能であることを保証しますが、無関係なスキルでトークンを浪費しコンテキスト制限に達する可能性があります。推薦システム（モデルがスキルを提案し人間が承認）は遅延を増加させます。遅延読み込みにより、モデルは必要な時に必要な知識を自ら取得できます。"
       }
     },
     {
@@ -36,11 +40,13 @@
       "alternatives": "A separate metadata file (skill.yaml + skill.md) would work but doubles the number of files. Embedding metadata in the markdown (as headings or comments) requires parsing the full file to extract metadata. Frontmatter is a well-established convention (Jekyll, Hugo, Astro) that keeps metadata and content co-located but separately parseable.",
       "zh": {
         "title": "SKILL.md 采用 YAML Frontmatter + Markdown 正文",
-        "description": "每个 SKILL.md 文件有两部分：YAML frontmatter（名称、描述、globs）和 markdown 正文（实际指令）。Frontmatter 作为技能注册表的元数据——当 agent 问'有哪些可用技能'时，展示的就是这些信息。正文是按需加载的有效负载。这种分离意味着可以列出 100 个技能（每个只读几字节的 frontmatter）而不必加载 100 套完整指令集（每套可能数千 token）。"
+        "description": "每个 SKILL.md 文件有两部分：YAML frontmatter（名称、描述、globs）和 markdown 正文（实际指令）。Frontmatter 作为技能注册表的元数据——当 agent 问'有哪些可用技能'时，展示的就是这些信息。正文是按需加载的有效负载。这种分离意味着可以列出 100 个技能（每个只读几字节的 frontmatter）而不必加载 100 套完整指令集（每套可能数千 token）。",
+        "alternatives": "使用独立的元数据文件（skill.yaml + skill.md）可行但会使文件数翻倍。将元数据嵌入 markdown（作为标题或注释）需要解析整个文件才能提取元数据。Frontmatter 是一种成熟的约定（Jekyll、Hugo、Astro），使元数据与内容并存但可独立解析。"
       },
       "ja": {
         "title": "SKILL.md で YAML フロントマター + Markdown 本文",
-        "description": "各 SKILL.md ファイルは2つの部分で構成されます：YAML フロントマター（名前、説明、globs）と Markdown 本文（実際の指示）。フロントマターはスキルレジストリのメタデータとして機能し、エージェントが「どんなスキルが利用可能か」と問い合わせた際に一覧表示されます。本文はオンデマンドで読み込まれるペイロードです。この分離により、100個のスキル一覧表示（各数バイトのフロントマターのみ読み取り）が100個の完全な指示セット（各数千トークン）のロードなしに可能になります。"
+        "description": "各 SKILL.md ファイルは2つの部分で構成されます：YAML フロントマター（名前、説明、globs）と Markdown 本文（実際の指示）。フロントマターはスキルレジストリのメタデータとして機能し、エージェントが「どんなスキルが利用可能か」と問い合わせた際に一覧表示されます。本文はオンデマンドで読み込まれるペイロードです。この分離により、100個のスキル一覧表示（各数バイトのフロントマターのみ読み取り）が100個の完全な指示セット（各数千トークン）のロードなしに可能になります。",
+        "alternatives": "メタデータファイルを分離する（skill.yaml + skill.md）方式は機能しますがファイル数が2倍になります。メタデータを Markdown に埋め込む（見出しやコメントとして）場合、メタデータの抽出に全ファイルの解析が必要です。フロントマターは確立された慣例（Jekyll、Hugo、Astro）であり、メタデータとコンテンツを同じ場所に保ちつつ個別に解析可能です。"
       }
     }
   ]

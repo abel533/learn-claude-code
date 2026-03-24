@@ -47,40 +47,85 @@ skills/
 
 2. SkillLoader 递归扫描 `SKILL.md` 文件, 用目录名作为技能标识。
 
-```python
-class SkillLoader:
-    def __init__(self, skills_dir: Path):
-        self.skills = {}
-        for f in sorted(skills_dir.rglob("SKILL.md")):
-            text = f.read_text()
-            meta, body = self._parse_frontmatter(text)
-            name = meta.get("name", f.parent.name)
-            self.skills[name] = {"meta": meta, "body": body}
+```java
+public class SkillLoader {
 
-    def get_descriptions(self) -> str:
-        lines = []
-        for name, skill in self.skills.items():
-            desc = skill["meta"].get("description", "")
-            lines.append(f"  - {name}: {desc}")
-        return "\n".join(lines)
+    private static final Pattern FRONTMATTER_PATTERN =
+            Pattern.compile("^---\\n(.*?)\\n---\\n(.*)", Pattern.DOTALL);
 
-    def get_content(self, name: str) -> str:
-        skill = self.skills.get(name)
-        if not skill:
-            return f"Error: Unknown skill '{name}'."
-        return f"<skill name=\"{name}\">\n{skill['body']}\n</skill>"
+    private final Map<String, SkillInfo> skills = new LinkedHashMap<>();
+
+    record SkillInfo(Map<String, String> meta, String body, String path) {}
+
+    public SkillLoader(Path skillsDir) {
+        loadAll(skillsDir);
+    }
+
+    /** 递归扫描 skills 目录下所有 SKILL.md 文件 */
+    private void loadAll(Path skillsDir) {
+        if (!Files.exists(skillsDir)) return;
+        try (Stream<Path> paths = Files.walk(skillsDir)) {
+            paths.filter(p -> p.getFileName().toString().equals("SKILL.md"))
+                    .sorted()
+                    .forEach(p -> {
+                        String text = Files.readString(p);
+                        var parsed = parseFrontmatter(text);
+                        String name = parsed.meta().getOrDefault("name",
+                                p.getParent().getFileName().toString());
+                        skills.put(name, new SkillInfo(
+                                parsed.meta(), parsed.body(), p.toString()));
+                    });
+        }
+    }
+
+    /** Layer 1: 获取所有技能的简短描述（用于系统提示注入） */
+    public String getDescriptions() {
+        if (skills.isEmpty()) return "(no skills available)";
+        StringBuilder sb = new StringBuilder();
+        for (var entry : skills.entrySet()) {
+            String desc = entry.getValue().meta()
+                    .getOrDefault("description", "No description");
+            sb.append("  - ").append(entry.getKey())
+                    .append(": ").append(desc).append("\n");
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    /** Layer 2: 加载指定技能的完整内容（作为 @Tool 方法） */
+    @Tool(description = "Load specialized knowledge by name.")
+    public String loadSkill(
+            @ToolParam(description = "Skill name to load") String name) {
+        SkillInfo skill = skills.get(name);
+        if (skill == null)
+            return "Error: Unknown skill '" + name + "'. Available: "
+                    + String.join(", ", skills.keySet());
+        return "<skill name=\"" + name + "\">\n"
+                + skill.body() + "\n</skill>";
+    }
+}
 ```
 
-3. 第一层写入系统提示。第二层不过是 dispatch map 中的又一个工具。
+3. 第一层写入系统提示。第二层通过 SkillLoader 上的 `@Tool` 注解方法按需加载。
 
-```python
-SYSTEM = f"""You are a coding agent at {WORKDIR}.
-Skills available:
-{SKILL_LOADER.get_descriptions()}"""
+```java
+public S05SkillLoading(ChatModel chatModel) {
+    Path skillsDir = Path.of(System.getProperty("user.dir"), "skills");
+    SkillLoader skillLoader = new SkillLoader(skillsDir);
 
-TOOL_HANDLERS = {
-    # ...base tools...
-    "load_skill": lambda **kw: SKILL_LOADER.get_content(kw["name"]),
+    // Layer 1: 技能元数据注入系统提示
+    String system = "You are a coding agent at " + System.getProperty("user.dir") + ".\n"
+            + "Use loadSkill to access specialized knowledge.\n\n"
+            + "Skills available:\n"
+            + skillLoader.getDescriptions();
+
+    this.chatClient = ChatClient.builder(chatModel)
+            .defaultSystem(system)
+            .defaultTools(
+                    new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(),
+                    skillLoader  // Layer 2: loadSkill @Tool 方法
+            )
+            .build();
 }
 ```
 
@@ -99,7 +144,7 @@ TOOL_HANDLERS = {
 
 ```sh
 cd learn-claude-code
-python agents/s05_skill_loading.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s05.S05SkillLoading
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):

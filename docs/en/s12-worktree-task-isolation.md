@@ -8,7 +8,7 @@
 
 ## Problem
 
-By s11, agents can claim and complete tasks autonomously. But every task runs in one shared directory. Two agents refactoring different modules at the same time will collide: agent A edits `config.py`, agent B edits `config.py`, unstaged changes mix, and neither can roll back cleanly.
+By s11, agents can claim and complete tasks autonomously. But every task runs in one shared directory. Two agents refactoring different modules at the same time will collide -- agent A edits `Config.java`, agent B also edits `Config.java`, unstaged changes mix, and neither can roll back cleanly.
 
 The task board tracks *what to do* but has no opinion about *where to do it*. The fix: give each task its own git worktree directory. Tasks manage goals, worktrees manage execution context. Bind them by task ID.
 
@@ -38,48 +38,71 @@ State machines:
 
 1. **Create a task.** Persist the goal first.
 
-```python
-TASKS.create("Implement auth refactor")
-# -> .tasks/task_1.json  status=pending  worktree=""
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeTaskManager.java
+tasks.create("Implement auth refactor", "");
+// -> .tasks/task_1.json  status=pending  worktree=""
 ```
 
 2. **Create a worktree and bind to the task.** Passing `task_id` auto-advances the task to `in_progress`.
 
-```python
-WORKTREES.create("auth-refactor", task_id=1)
-# -> git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD
-# -> index.json gets new entry, task_1.json gets worktree="auth-refactor"
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeManager.java
+worktrees.create("auth-refactor", 1, "HEAD");
+// -> git worktree add -b wt/auth-refactor .worktrees/auth-refactor HEAD
+// -> index.json gets new entry, task_1.json gets worktree="auth-refactor"
 ```
 
 The binding writes state to both sides:
 
-```python
-def bind_worktree(self, task_id, worktree):
-    task = self._load(task_id)
-    task["worktree"] = worktree
-    if task["status"] == "pending":
-        task["status"] = "in_progress"
-    self._save(task)
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeTaskManager.java
+public String bindWorktree(int taskId, String worktree, String owner) {
+    var task = load(taskId);
+    task.put("worktree", worktree);
+    if (owner != null && !owner.isEmpty()) task.put("owner", owner);
+    if ("pending".equals(task.get("status"))) task.put("status", "in_progress");
+    task.put("updated_at", System.currentTimeMillis() / 1000.0);
+    save(task);
+    return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(task);
+}
 ```
 
 3. **Run commands in the worktree.** `cwd` points to the isolated directory.
 
-```python
-subprocess.run(command, shell=True, cwd=worktree_path,
-               capture_output=True, text=True, timeout=300)
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeManager.java - run()
+boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+ProcessBuilder pb = isWindows
+        ? new ProcessBuilder("cmd", "/c", command)
+        : new ProcessBuilder("sh", "-c", command);
+pb.directory(path.toFile());
+pb.redirectErrorStream(true);
+Process p = pb.start();
+String out = new String(p.getInputStream().readAllBytes()).trim();
+boolean finished = p.waitFor(300, java.util.concurrent.TimeUnit.SECONDS);
 ```
 
 4. **Close out.** Two choices:
    - `worktree_keep(name)` -- preserve the directory for later.
    - `worktree_remove(name, complete_task=True)` -- remove directory, complete the bound task, emit event. One call handles teardown + completion.
 
-```python
-def remove(self, name, force=False, complete_task=False):
-    self._run_git(["worktree", "remove", wt["path"]])
-    if complete_task and wt.get("task_id") is not None:
-        self.tasks.update(wt["task_id"], status="completed")
-        self.tasks.unbind_worktree(wt["task_id"])
-        self.events.emit("task.completed", ...)
+```java
+// src/main/java/io/mybatis/learn/s12/WorktreeManager.java
+public String remove(String name, boolean force, boolean completeTask) {
+    var wt = findWorktree(name);
+    events.emit("worktree.remove.before", ...);
+    runGit("worktree", "remove", wt.get("path").toString());
+    if (completeTask && wt.get("task_id") != null) {
+        int taskId = ((Number) wt.get("task_id")).intValue();
+        tasks.update(taskId, "completed", null);
+        tasks.unbindWorktree(taskId);
+        events.emit("task.completed",
+                Map.of("id", taskId, "status", "completed"),
+                Map.of("name", name), null);
+    }
+    // Update index.json: status -> "removed"
+}
 ```
 
 5. **Event stream.** Every lifecycle step emits to `.worktrees/events.jsonl`:
@@ -111,8 +134,10 @@ After a crash, state reconstructs from `.tasks/` + `.worktrees/index.json` on di
 
 ```sh
 cd learn-claude-code
-python agents/s12_worktree_task_isolation.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s12.S12WorktreeIsolation
 ```
+
+Try these prompts (English prompts work better with LLMs, but Chinese also works):
 
 1. `Create tasks for backend auth and frontend login page, then list tasks.`
 2. `Create worktree "auth-refactor" for task 1, then bind task 2 to a new worktree "ui-login".`

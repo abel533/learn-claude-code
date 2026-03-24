@@ -30,13 +30,20 @@
     "none": "无",
     "source_diff": "源码差异",
     "empty_hint": "请在上方选择两个版本进行对比。",
-    "architecture": "架构"
+    "architecture": "架构",
+    "select_placeholder": "-- 请选择 --"
   },
   "diff": {
     "new_classes": "新增类",
     "new_tools": "新增工具",
     "new_functions": "新增函数",
-    "loc_delta": "代码量差异"
+    "loc_delta": "代码量差异",
+    "lines": "行",
+    "source_diff": "源码差异",
+    "version_not_found": "未找到版本",
+    "back_to_timeline": "返回学习路径",
+    "back_to": "返回",
+    "first_version_hint": "这是第一个版本，没有可对比的前一版本。"
   },
   "sessions": {
     "s01": "Agent 循环",
@@ -72,5 +79,19 @@
     "s10": "FSM 团队协议",
     "s11": "自主 Agent 循环",
     "s12": "Worktree 任务隔离"
+  },
+  "version_meta": {
+    "s01": { "title_local": "Agent 循环", "subtitle": "一个循环 + Bash 就够了", "keyInsight": "最小 Agent 内核就是一个循环加一个工具", "coreAddition": "单工具 Agent 循环" },
+    "s02": { "title_local": "工具", "subtitle": "每个工具只加一个 @Tool", "keyInsight": "循环不变; 新工具通过 @Tool 和 defaultTools() 注册", "coreAddition": "@Tool 注解 + defaultTools()" },
+    "s03": { "title_local": "TodoWrite 计划", "subtitle": "先计划再行动", "keyInsight": "没有计划的 Agent 漫无目的; 先列步骤再执行", "coreAddition": "TodoManager + 提醒机制" },
+    "s04": { "title_local": "子 Agent", "subtitle": "每个子任务独立上下文", "keyInsight": "子 Agent 使用独立消息列表, 保持主对话干净", "coreAddition": "独立消息上下文的子 Agent" },
+    "s05": { "title_local": "技能", "subtitle": "按需加载", "keyInsight": "通过工具结果按需注入知识, 不预先塞进系统提示", "coreAddition": "SkillLoader + 两层注入" },
+    "s06": { "title_local": "上下文压缩", "subtitle": "三层压缩策略", "keyInsight": "上下文总会满; 三层压缩策略实现无限会话", "coreAddition": "微压缩 + 自动压缩 + 归档" },
+    "s07": { "title_local": "任务系统", "subtitle": "任务图 + 依赖关系", "keyInsight": "基于文件的任务图, 支持排序、并行和依赖 -- 多 Agent 协作的协调骨架", "coreAddition": "文件持久化的 TaskManager + 依赖图" },
+    "s08": { "title_local": "后台任务", "subtitle": "虚拟线程 + 通知", "keyInsight": "慢操作丢后台; Agent 继续思考下一步", "coreAddition": "BackgroundManager + 通知队列" },
+    "s09": { "title_local": "Agent 团队", "subtitle": "队友 + 邮箱", "keyInsight": "一个人干不完就委托给持久化队友, 通过异步邮箱通信", "coreAddition": "TeammateManager + 文件邮箱" },
+    "s10": { "title_local": "团队协议", "subtitle": "统一沟通规矩", "keyInsight": "一个 request-response 模式驱动所有团队协商", "coreAddition": "request_id 关联的两个协议" },
+    "s11": { "title_local": "自治 Agent", "subtitle": "扫看板, 认领任务", "keyInsight": "队友自己扫看板认领任务; 不需要领导逐个分配", "coreAddition": "任务板轮询 + 基于超时的自治" },
+    "s12": { "title_local": "Worktree 隔离", "subtitle": "各干各的目录", "keyInsight": "各自独立目录; 任务管目标, worktree 管目录, 按 ID 绑定", "coreAddition": "可组合 worktree 生命周期 + 事件流" }
   }
 }

@@ -10,7 +10,7 @@
 
 In s09, teammates work and communicate but lack structured coordination:
 
-**Shutdown**: Killing a thread leaves files half-written and config.json stale. You need a handshake: the lead requests, the teammate approves (finish and exit) or rejects (keep working).
+**Shutdown**: Killing a thread leaves files half-written and config.json stale. You need a handshake -- the lead requests, the teammate approves (finish and exit) or rejects (keep working).
 
 **Plan approval**: When the lead says "refactor the auth module," the teammate starts immediately. For high-risk changes, the lead should review the plan first.
 
@@ -44,60 +44,88 @@ Trackers:
 
 1. The lead initiates shutdown by generating a request_id and sending through the inbox.
 
-```python
-shutdown_requests = {}
+```java
+// src/main/java/io/mybatis/learn/s10/ProtocolTracker.java
+// Python uses dict + threading.Lock; Java uses ConcurrentHashMap for natural thread safety
+private final ConcurrentHashMap<String, Map<String, String>> shutdownRequests
+        = new ConcurrentHashMap<>();
 
-def handle_shutdown_request(teammate: str) -> str:
-    req_id = str(uuid.uuid4())[:8]
-    shutdown_requests[req_id] = {"target": teammate, "status": "pending"}
-    BUS.send("lead", teammate, "Please shut down gracefully.",
-             "shutdown_request", {"request_id": req_id})
-    return f"Shutdown request {req_id} sent (status: pending)"
+public String handleShutdownRequest(String teammate) {
+    String reqId = UUID.randomUUID().toString().substring(0, 8);
+    shutdownRequests.put(reqId, new ConcurrentHashMap<>(Map.of(
+            "target", teammate, "status", "pending")));
+    bus.send("lead", teammate, "Please shut down gracefully.",
+            "shutdown_request", Map.of("request_id", reqId));
+    return "Shutdown request " + reqId + " sent to '" + teammate
+            + "' (status: pending)";
+}
 ```
 
 2. The teammate receives the request and responds with approve/reject.
 
-```python
-if tool_name == "shutdown_response":
-    req_id = args["request_id"]
-    approve = args["approve"]
-    shutdown_requests[req_id]["status"] = "approved" if approve else "rejected"
-    BUS.send(sender, "lead", args.get("reason", ""),
-             "shutdown_response",
-             {"request_id": req_id, "approve": approve})
+```java
+// TeammateProtocolTool - teammates respond to shutdown requests via @Tool annotation
+@Tool(description = "Respond to a shutdown request")
+public String shutdownResponse(
+        @ToolParam(description = "The request_id") String requestId,
+        @ToolParam(description = "true to approve") boolean approve,
+        @ToolParam(description = "Reason for decision") String reason) {
+    return tracker.respondToShutdown(name, requestId, approve, reason);
+}
+
+// ProtocolTracker - updates tracker + sends response message
+public String respondToShutdown(String sender, String requestId,
+                                boolean approve, String reason) {
+    var req = shutdownRequests.get(requestId);
+    if (req != null) {
+        req.put("status", approve ? "approved" : "rejected");
+    }
+    bus.send(sender, "lead", reason != null ? reason : "",
+            "shutdown_response",
+            Map.of("request_id", requestId, "approve", approve));
+    return "Shutdown " + (approve ? "approved" : "rejected");
+}
 ```
 
 3. Plan approval follows the identical pattern. The teammate submits a plan (generating a request_id), the lead reviews (referencing the same request_id).
 
-```python
-plan_requests = {}
+```java
+// ProtocolTracker - same request_id correlation pattern, two use cases
+private final ConcurrentHashMap<String, Map<String, String>> planRequests
+        = new ConcurrentHashMap<>();
 
-def handle_plan_review(request_id, approve, feedback=""):
-    req = plan_requests[request_id]
-    req["status"] = "approved" if approve else "rejected"
-    BUS.send("lead", req["from"], feedback,
-             "plan_approval_response",
-             {"request_id": request_id, "approve": approve})
+public String reviewPlan(String requestId, boolean approve, String feedback) {
+    var req = planRequests.get(requestId);
+    if (req == null) return "Error: Unknown plan request_id '" + requestId + "'";
+    req.put("status", approve ? "approved" : "rejected");
+    bus.send("lead", req.get("from"), feedback != null ? feedback : "",
+            "plan_approval_response",
+            Map.of("request_id", requestId, "approve", approve,
+                    "feedback", feedback != null ? feedback : ""));
+    return "Plan " + req.get("status") + " for '" + req.get("from") + "'";
+}
 ```
 
 One FSM, two applications. The same `pending -> approved | rejected` state machine handles any request-response protocol.
 
 ## What Changed From s09
 
-| Component      | Before (s09)     | After (s10)                  |
-|----------------|------------------|------------------------------|
-| Tools          | 9                | 12 (+shutdown_req/resp +plan)|
-| Shutdown       | Natural exit only| Request-response handshake   |
-| Plan gating    | None             | Submit/review with approval  |
-| Correlation    | None             | request_id per request       |
-| FSM            | None             | pending -> approved/rejected |
+| Component      | Before (s09)     | After (s10)                          |
+|----------------|------------------|--------------------------------------|
+| Tools          | 9                | 12 (+shutdown_req/resp +plan)        |
+| Shutdown       | Natural exit only| Request-response handshake           |
+| Plan gating    | None             | Submit/review with approval          |
+| Correlation    | None             | request_id per request               |
+| FSM            | None             | pending -> approved/rejected         |
 
 ## Try It
 
 ```sh
 cd learn-claude-code
-python agents/s10_team_protocols.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s10.S10TeamProtocols
 ```
+
+Try these prompts (English prompts work better with LLMs, but Chinese also works):
 
 1. `Spawn alice as a coder. Then request her shutdown.`
 2. `List teammates to see alice's status after shutdown approval`

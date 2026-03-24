@@ -30,67 +30,73 @@ Parent context stays clean. Subagent context is discarded.
 
 1. 父智能体有一个 `task` 工具。子智能体拥有除 `task` 外的所有基础工具 (禁止递归生成)。
 
-```python
-PARENT_TOOLS = CHILD_TOOLS + [
-    {"name": "task",
-     "description": "Spawn a subagent with fresh context.",
-     "input_schema": {
-         "type": "object",
-         "properties": {"prompt": {"type": "string"}},
-         "required": ["prompt"],
-     }},
-]
-```
-
-2. 子智能体以 `messages=[]` 启动, 运行自己的循环。只有最终文本返回给父智能体。
-
-```python
-def run_subagent(prompt: str) -> str:
-    sub_messages = [{"role": "user", "content": prompt}]
-    for _ in range(30):  # safety limit
-        response = client.messages.create(
-            model=MODEL, system=SUBAGENT_SYSTEM,
-            messages=sub_messages,
-            tools=CHILD_TOOLS, max_tokens=8000,
+```java
+// 父 Agent：拥有基础工具 + SubagentTool
+this.chatClient = ChatClient.builder(chatModel)
+        .defaultSystem("You are a coding agent. "
+                + "Use the task tool to delegate subtasks.")
+        .defaultTools(
+                new BashTool(),
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new SubagentTool(chatModel)  // 父 Agent 独有
         )
-        sub_messages.append({"role": "assistant",
-                             "content": response.content})
-        if response.stop_reason != "tool_use":
-            break
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                handler = TOOL_HANDLERS.get(block.name)
-                output = handler(**block.input)
-                results.append({"type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(output)[:50000]})
-        sub_messages.append({"role": "user", "content": results})
-    return "".join(
-        b.text for b in response.content if hasattr(b, "text")
-    ) or "(no summary)"
+        .build();
 ```
 
-子智能体可能跑了 30+ 次工具调用, 但整个消息历史直接丢弃。父智能体收到的只是一段摘要文本, 作为普通 `tool_result` 返回。
+2. 子智能体以全新的 `ChatClient` 启动, 拥有独立上下文。只有最终文本返回给父智能体。
+
+```java
+@Tool(description = "Spawn a subagent with fresh context. "
+        + "Use for exploration or subtasks that might pollute the main context.")
+public String task(
+        @ToolParam(description = "The task prompt") String prompt,
+        @ToolParam(description = "Short description", required = false)
+        String description) {
+
+    // 创建全新的 ChatClient —— 这就是"上下文隔离"的全部
+    ChatClient subClient = ChatClient.builder(chatModel)
+            .defaultSystem("You are a coding subagent. "
+                    + "Complete the task, then summarize findings.")
+            .defaultTools(          // 基础工具, 没有 task (防止递归)
+                    new BashTool(),
+                    new ReadFileTool(),
+                    new WriteFileTool(),
+                    new EditFileTool()
+            )
+            .build();
+
+    String result = subClient.prompt()
+            .user(prompt)
+            .call()
+            .content();
+
+    // 只返回最终文本, 子 Agent 上下文被丢弃
+    return (result != null) ? result : "(no summary)";
+}
+```
+
+子智能体可能跑了多次工具调用, 但整个消息历史直接丢弃。父智能体收到的只是一段摘要文本, 作为普通 `tool_result` 返回。Spring AI 的 `ChatClient.call()` 内部管理工具循环, 无需手动限制迭代次数。
 
 ## 相对 s03 的变更
 
-| 组件           | 之前 (s03)       | 之后 (s04)                    |
-|----------------|------------------|-------------------------------|
-| Tools          | 5                | 5 (基础) + task (仅父端)      |
-| 上下文         | 单一共享         | 父 + 子隔离                   |
-| Subagent       | 无               | `run_subagent()` 函数         |
-| 返回值         | 不适用           | 仅摘要文本                    |
+| 组件           | 之前 (s03)       | 之后 (s04)                           |
+|----------------|------------------|---------------------------------------|
+| Tools          | 5                | 5 (基础) + SubagentTool (仅父端)     |
+| 上下文         | 单一共享         | 父 + 子隔离 (独立 ChatClient)        |
+| Subagent       | 无               | `SubagentTool.task()` 方法           |
+| 返回值         | 不适用           | 仅摘要文本                           |
 
 ## 试一试
 
 ```sh
 cd learn-claude-code
-python agents/s04_subagent.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s04.S04Subagent
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):
 
 1. `Use a subtask to find what testing framework this project uses`
-2. `Delegate: read all .py files and summarize what each one does`
+2. `Delegate: read all .java files and summarize what each one does`
 3. `Use a task to create a new module, then verify it from here`

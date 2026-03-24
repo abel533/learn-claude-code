@@ -7,7 +7,7 @@ interface SourceViewerProps {
   filename: string;
 }
 
-function highlightLine(line: string): React.ReactNode[] {
+function highlightPythonLine(line: string): React.ReactNode[] {
   const trimmed = line.trimStart();
   if (trimmed.startsWith("#")) {
     return [
@@ -68,7 +68,72 @@ function highlightLine(line: string): React.ReactNode[] {
   });
 }
 
+function highlightJavaLine(line: string): React.ReactNode[] {
+  const trimmed = line.trimStart();
+
+  // 单行注释
+  if (trimmed.startsWith("//")) {
+    return [
+      <span key={0} className="text-zinc-400 italic">
+        {line}
+      </span>,
+    ];
+  }
+
+  // 块注释行 (/* ... */, * ..., */)
+  if (trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.startsWith("*/")) {
+    return [
+      <span key={0} className="text-zinc-400 italic">
+        {line}
+      </span>,
+    ];
+  }
+
+  const javaKeywords = new Set([
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+    "class", "const", "continue", "default", "do", "double", "else", "enum",
+    "extends", "final", "finally", "float", "for", "if", "implements", "import",
+    "instanceof", "int", "interface", "long", "native", "new", "package",
+    "private", "protected", "public", "record", "return", "short", "static",
+    "strictfp", "super", "switch", "synchronized", "throw", "throws",
+    "transient", "try", "var", "void", "volatile", "while", "yield",
+    "true", "false", "null",
+  ]);
+
+  const parts = line.split(
+    /(\b(?:abstract|assert|boolean|break|byte|case|catch|char|class|const|continue|default|do|double|else|enum|extends|final|finally|float|for|if|implements|import|instanceof|int|interface|long|native|new|package|private|protected|public|record|return|short|static|strictfp|super|switch|synchronized|this|throw|throws|transient|try|var|void|volatile|while|yield|true|false|null)\b|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\/\/.*$|@\w+|\b\d+(?:\.\d+)?[dDfFlL]?\b)/
+  );
+
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (part === "this") {
+      return <span key={idx} className="text-purple-400">{part}</span>;
+    }
+    if (javaKeywords.has(part)) {
+      return <span key={idx} className="text-blue-400 font-medium">{part}</span>;
+    }
+    if (part.startsWith("//")) {
+      return <span key={idx} className="text-zinc-400 italic">{part}</span>;
+    }
+    if (part.startsWith("@")) {
+      return <span key={idx} className="text-amber-400">{part}</span>;
+    }
+    if (
+      (part.startsWith('"') && part.endsWith('"')) ||
+      (part.startsWith("'") && part.endsWith("'"))
+    ) {
+      return <span key={idx} className="text-emerald-500">{part}</span>;
+    }
+    if (/^\d+(?:\.\d+)?[dDfFlL]?$/.test(part)) {
+      return <span key={idx} className="text-orange-400">{part}</span>;
+    }
+    return <span key={idx}>{part}</span>;
+  });
+}
+
 export function SourceViewer({ source, filename }: SourceViewerProps) {
+  const isJava = filename.endsWith(".java");
+  const highlighter = isJava ? highlightJavaLine : highlightPythonLine;
   const lines = useMemo(() => source.split("\n"), [source]);
 
   return (
@@ -90,7 +155,7 @@ export function SourceViewer({ source, filename }: SourceViewerProps) {
                   {i + 1}
                 </span>
                 <span className="text-zinc-200">
-                  {highlightLine(line)}
+                  {highlighter(line)}
                 </span>
               </div>
             ))}

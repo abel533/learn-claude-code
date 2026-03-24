@@ -10,7 +10,7 @@
 
 s03's TodoManager is a flat checklist in memory: no ordering, no dependencies, no status beyond done-or-not. Real goals have structure -- task B depends on task A, tasks C and D can run in parallel, task E waits for both C and D.
 
-Without explicit relationships, the agent can't tell what's ready, what's blocked, or what can run concurrently. And because the list lives only in memory, context compression (s06) wipes it clean.
+Without explicit relationships, the agent can't tell what's ready, what's blocked, or what can run concurrently. And because the list lives only in memory, context compaction (s06) wipes it clean.
 
 ## Solution
 
@@ -48,57 +48,98 @@ This task graph becomes the coordination backbone for everything after s07: back
 
 ## How It Works
 
-1. **TaskManager**: one JSON file per task, CRUD with dependency graph.
+1. **TaskManager**: one JSON file per task, CRUD with dependency graph. Uses Jackson `ObjectMapper` for JSON serialization.
 
-```python
-class TaskManager:
-    def __init__(self, tasks_dir: Path):
-        self.dir = tasks_dir
-        self.dir.mkdir(exist_ok=True)
-        self._next_id = self._max_id() + 1
+```java
+public class TaskManager {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final Path dir;
+    private int nextId;
 
-    def create(self, subject, description=""):
-        task = {"id": self._next_id, "subject": subject,
-                "status": "pending", "blockedBy": [],
-                "blocks": [], "owner": ""}
-        self._save(task)
-        self._next_id += 1
-        return json.dumps(task, indent=2)
+    public TaskManager(Path tasksDir) {
+        this.dir = tasksDir;
+        Files.createDirectories(dir);
+        this.nextId = maxId() + 1;
+    }
+
+    @Tool(description = "Create a new task with subject and optional description")
+    public String taskCreate(
+            @ToolParam(description = "Short subject of the task") String subject,
+            @ToolParam(description = "Detailed description", required = false) String description) {
+        Map<String, Object> task = new LinkedHashMap<>();
+        task.put("id", nextId);
+        task.put("subject", subject);
+        task.put("status", "pending");
+        task.put("blockedBy", new ArrayList<>());
+        task.put("blocks", new ArrayList<>());
+        save(task);
+        nextId++;
+        return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(task);
+    }
+}
 ```
 
 2. **Dependency resolution**: completing a task clears its ID from every other task's `blockedBy` list, automatically unblocking dependents.
 
-```python
-def _clear_dependency(self, completed_id):
-    for f in self.dir.glob("task_*.json"):
-        task = json.loads(f.read_text())
-        if completed_id in task.get("blockedBy", []):
-            task["blockedBy"].remove(completed_id)
-            self._save(task)
+```java
+private void clearDependency(int completedId) {
+    try (Stream<Path> files = Files.list(dir)) {
+        files.filter(f -> f.getFileName().toString().matches("task_\\d+\\.json"))
+                .forEach(f -> {
+                    Map<String, Object> task = MAPPER.readValue(
+                            Files.readString(f), new TypeReference<>() {});
+                    List<Integer> blockedBy = (List<Integer>) task.get("blockedBy");
+                    if (blockedBy != null && blockedBy.remove(Integer.valueOf(completedId))) {
+                        save(task);
+                    }
+                });
+    }
+}
 ```
 
-3. **Status + dependency wiring**: `update` handles transitions and dependency edges.
+3. **Status transitions + dependency wiring**: `taskUpdate` handles status transitions and dependency edges. When status changes to `completed`, it automatically calls `clearDependency`; `blockedBy`/`blocks` are bidirectional relationships.
 
-```python
-def update(self, task_id, status=None,
-           add_blocked_by=None, add_blocks=None):
-    task = self._load(task_id)
-    if status:
-        task["status"] = status
-        if status == "completed":
-            self._clear_dependency(task_id)
-    self._save(task)
+```java
+@Tool(description = "Update a task's status or dependencies.")
+public String taskUpdate(
+        @ToolParam(description = "Task ID") int taskId,
+        @ToolParam(description = "New status", required = false) String status,
+        @ToolParam(description = "Task IDs that block this task", required = false) List<Integer> addBlockedBy,
+        @ToolParam(description = "Task IDs that this task blocks", required = false) List<Integer> addBlocks) {
+    Map<String, Object> task = load(taskId);
+    if (status != null) {
+        task.put("status", status);
+        if ("completed".equals(status)) {
+            clearDependency(taskId);
+        }
+    }
+    // Handle addBlockedBy / addBlocks bidirectional dependencies ...
+    save(task);
+    return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(task);
+}
 ```
 
-4. Four task tools go into the dispatch map.
+4. **Spring AI auto-registers tools**: Pass `TaskManager` as a `defaultTools` argument to `ChatClient`. Spring AI automatically recognizes `@Tool` annotated methods -- no manual dispatch map needed.
 
-```python
-TOOL_HANDLERS = {
-    # ...base tools...
-    "task_create": lambda **kw: TASKS.create(kw["subject"]),
-    "task_update": lambda **kw: TASKS.update(kw["task_id"], kw.get("status")),
-    "task_list":   lambda **kw: TASKS.list_all(),
-    "task_get":    lambda **kw: TASKS.get(kw["task_id"]),
+```java
+@SpringBootApplication(scanBasePackages = "io.mybatis.learn.core")
+public class S07TaskSystem implements CommandLineRunner {
+
+    private final ChatClient chatClient;
+
+    public S07TaskSystem(ChatModel chatModel) {
+        Path tasksDir = Path.of(System.getProperty("user.dir"), ".tasks");
+        TaskManager taskManager = new TaskManager(tasksDir);
+
+        this.chatClient = ChatClient.builder(chatModel)
+                .defaultSystem("You are a coding agent. Use task tools to plan and track work.")
+                .defaultTools(
+                        new BashTool(), new ReadFileTool(),
+                        new WriteFileTool(), new EditFileTool(),
+                        taskManager   // @Tool methods in TaskManager are auto-registered
+                )
+                .build();
+    }
 }
 ```
 
@@ -118,8 +159,10 @@ From s07 onward, the task graph is the default for multi-step work. s03's Todo r
 
 ```sh
 cd learn-claude-code
-python agents/s07_task_system.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s07.S07TaskSystem
 ```
+
+Try these prompts (English prompts work better with LLMs, but Chinese also works):
 
 1. `Create 3 tasks: "Setup project", "Write code", "Write tests". Make them depend on each other in order.`
 2. `List all tasks and show the dependency graph`

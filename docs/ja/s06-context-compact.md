@@ -1,4 +1,4 @@
-# s06: Context Compact
+# s06: Context Compact (コンテキスト圧縮)
 
 `s01 > s02 > s03 > s04 > s05 > [ s06 ] | s07 > s08 > s09 > s10 > s11 > s12`
 
@@ -8,7 +8,7 @@
 
 ## 問題
 
-コンテキストウィンドウは有限だ。1000行のファイルに対する`read_file`1回で約4000トークンを消費する。30ファイルを読み20回のbashコマンドを実行すると、100,000トークン超。圧縮なしでは、エージェントは大規模コードベースで作業できない。
+コンテキストウィンドウは有限だ。1000行のファイルを読むだけで約4000トークンを消費する。30ファイルを読み20回のコマンドを実行すると、100,000トークン超。圧縮なしでは、エージェントは大規模プロジェクトで作業できない。
 
 ## 解決策
 
@@ -44,82 +44,142 @@ continue    [Layer 2: auto_compact]
 
 ## 仕組み
 
-1. **第1層 -- micro_compact**: 各LLM呼び出しの前に、古いツール結果をプレースホルダーに置換する。
+1. **第1層 -- コンテキストウィンドウ管理**: Spring AI の ChatClient は内部でツールループを自動管理するため、ループ内に圧縮を挿入できない。Java 版では、システムプロンプトに注入する会話ターン数を制限し（最近の N ターンのみ保持）、コンテンツを切り詰めることで同等の効果を実現する。
 
-```python
-def micro_compact(messages: list) -> list:
-    tool_results = []
-    for i, msg in enumerate(messages):
-        if msg["role"] == "user" and isinstance(msg.get("content"), list):
-            for j, part in enumerate(msg["content"]):
-                if isinstance(part, dict) and part.get("type") == "tool_result":
-                    tool_results.append((i, j, part))
-    if len(tool_results) <= KEEP_RECENT:
-        return messages
-    for _, _, part in tool_results[:-KEEP_RECENT]:
-        if len(part.get("content", "")) > 100:
-            part["content"] = f"[Previous: used {tool_name}]"
-    return messages
+```java
+/** トークン数の推定: 粗い見積もりで 4文字 ≈ 1トークン */
+public int estimateTokens() {
+    int chars = history.stream().mapToInt(t -> t.content().length()).sum();
+    return chars / 4;
+}
+
+/** 会話履歴のサマリーを取得（システムプロンプト注入用、最近数ターンのみ保持） */
+public String getContextSummary() {
+    if (history.isEmpty()) return "";
+    StringBuilder sb = new StringBuilder("\n<conversation-context>\n");
+    int start = Math.max(0, history.size() - KEEP_RECENT * 2);
+    for (int i = start; i < history.size(); i++) {
+        ConversationTurn turn = history.get(i);
+        sb.append("[").append(turn.role()).append("]: ")
+                .append(turn.content(), 0, Math.min(500, turn.content().length()))
+                .append("\n");
+    }
+    sb.append("</conversation-context>");
+    return sb.toString();
+}
 ```
 
-2. **第2層 -- auto_compact**: トークンが閾値を超えたら、完全なトランスクリプトをディスクに保存し、LLMに要約を依頼する。
+2. **第2層 -- auto_compact**: トークンが閾値を超えたら、完全な会話をディスクに保存し、LLM に要約を依頼する。
 
-```python
-def auto_compact(messages: list) -> list:
-    # Save transcript for recovery
-    transcript_path = TRANSCRIPT_DIR / f"transcript_{int(time.time())}.jsonl"
-    with open(transcript_path, "w") as f:
-        for msg in messages:
-            f.write(json.dumps(msg, default=str) + "\n")
-    # LLM summarizes
-    response = client.messages.create(
-        model=MODEL,
-        messages=[{"role": "user", "content":
-            "Summarize this conversation for continuity..."
-            + json.dumps(messages, default=str)[:80000]}],
-        max_tokens=2000,
-    )
-    return [
-        {"role": "user", "content": f"[Compressed]\n\n{response.content[0].text}"},
-        {"role": "assistant", "content": "Understood. Continuing."},
-    ]
+```java
+public String compact() {
+    // トランスクリプトをディスクに保存（完全な履歴は失われない）
+    Files.createDirectories(transcriptDir);
+    Path transcriptPath = transcriptDir.resolve(
+            "transcript_" + System.currentTimeMillis() + ".jsonl");
+    try (BufferedWriter writer = Files.newBufferedWriter(transcriptPath)) {
+        for (ConversationTurn turn : history) {
+            writer.write(objectMapper.writeValueAsString(turn));
+            writer.newLine();
+        }
+    }
+
+    // LLM が要約を生成
+    String conversationText = history.stream()
+            .map(t -> t.role() + ": " + t.content())
+            .reduce("", (a, b) -> a + "\n" + b);
+    if (conversationText.length() > 80000) {
+        conversationText = conversationText.substring(0, 80000);
+    }
+
+    ChatClient summaryClient = ChatClient.builder(chatModel).build();
+    String summary = summaryClient.prompt()
+            .user("Summarize this conversation for continuity. Include: "
+                    + "1) What was accomplished, 2) Current state, "
+                    + "3) Key decisions.\n\n" + conversationText)
+            .call().content();
+
+    // 要約で履歴を置換
+    history.clear();
+    history.add(new ConversationTurn("system",
+            "[Conversation compressed. Transcript: " + transcriptPath
+                    + "]\n\n" + summary));
+    return summary;
+}
 ```
 
-3. **第3層 -- manual compact**: `compact`ツールが同じ要約処理をオンデマンドでトリガーする。
+3. **第3層 -- manual compact**: `CompactTool` ツールが同じ要約メカニズムをオンデマンドでトリガーする。
 
-4. ループが3層すべてを統合する:
+```java
+public class CompactTool {
+    private final ContextCompactor compactor;
 
-```python
-def agent_loop(messages: list):
-    while True:
-        micro_compact(messages)                        # Layer 1
-        if estimate_tokens(messages) > THRESHOLD:
-            messages[:] = auto_compact(messages)       # Layer 2
-        response = client.messages.create(...)
-        # ... tool execution ...
-        if manual_compact:
-            messages[:] = auto_compact(messages)       # Layer 3
+    public CompactTool(ContextCompactor compactor) {
+        this.compactor = compactor;
+    }
+
+    @Tool(description = "Trigger manual conversation compression to free up context space.")
+    public String compact(
+            @ToolParam(description = "What to preserve in summary",
+                    required = false) String focus) {
+        compactor.requestCompact();
+        return "Compression triggered. Context will be summarized.";
+    }
+}
 ```
 
-トランスクリプトがディスク上に完全な履歴を保持する。何も真に失われず、アクティブなコンテキストの外に移動されるだけ。
+4. REPL 層が3層すべてを統合する（Spring AI の ChatClient が内部でツールループを自動管理するため、圧縮はユーザーメッセージレベルでトリガーされる）:
 
-## s05からの変更点
+```java
+AgentRunner.interactive("s06", userMessage -> {
+    // Layer 2: 自動圧縮チェック（毎回のユーザー入力前）
+    if (compactor.needsAutoCompact()) {
+        System.out.println("[auto_compact triggered]");
+        compactor.compact();
+    }
+    compactor.addTurn("user", userMessage);
 
-| Component      | Before (s05)     | After (s06)                |
-|----------------|------------------|----------------------------|
-| Tools          | 5                | 5 (base + compact)         |
-| Context mgmt   | None             | Three-layer compression    |
-| Micro-compact  | None             | Old results -> placeholders|
-| Auto-compact   | None             | Token threshold trigger    |
-| Transcripts    | None             | Saved to .transcripts/     |
+    // 動的システムプロンプト: 会話コンテキストサマリーを含む
+    String system = baseSystem + compactor.getContextSummary();
+    ChatClient chatClient = ChatClient.builder(chatModel)
+            .defaultSystem(system)
+            .defaultTools(new BashTool(), new ReadFileTool(),
+                    new WriteFileTool(), new EditFileTool(), compactTool)
+            .build();
+
+    String response = chatClient.prompt()
+            .user(userMessage).call().content();
+    compactor.addTurn("assistant", response != null ? response : "");
+
+    // Layer 3: 手動圧縮（Agent が compact ツールを呼び出した場合）
+    if (compactor.isCompactRequested()) {
+        compactor.compact();
+    }
+    return response;
+});
+```
+
+完全な履歴はトランスクリプトとしてディスク上に保存される。情報は真に失われるのではなく、アクティブなコンテキストの外に移動されるだけだ。
+
+## s05 からの変更点
+
+| コンポーネント   | 変更前 (s05)     | 変更後 (s06)                   |
+|----------------|------------------|--------------------------------|
+| Tools          | 5                | 5 (基本 + compact)             |
+| コンテキスト管理 | なし             | 三層圧縮                       |
+| コンテキストウィンドウ管理 | なし   | 注入ターン数制限 + コンテンツ切り詰め |
+| Auto-compact   | なし             | トークン閾値トリガー            |
+| Transcripts    | なし             | .transcripts/ に保存           |
 
 ## 試してみる
 
 ```sh
 cd learn-claude-code
-python agents/s06_context_compact.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s06.S06ContextCompact
 ```
 
-1. `Read every Python file in the agents/ directory one by one` (micro-compactが古い結果を置換するのを観察する)
+以下のプロンプトを試してみよう (英語プロンプトの方が LLM に効果的だが、日本語でも可):
+
+1. `Read every Java file in the src/ directory one by one` (コンテキストウィンドウ管理の効果を観察する)
 2. `Keep reading files until compression triggers automatically`
 3. `Use the compact tool to manually compress the conversation`

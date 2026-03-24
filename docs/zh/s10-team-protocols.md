@@ -44,40 +44,66 @@ Trackers:
 
 1. 领导生成 request_id, 通过收件箱发起关机请求。
 
-```python
-shutdown_requests = {}
+```java
+// src/main/java/io/mybatis/learn/s10/ProtocolTracker.java
+// Python用字典 + threading.Lock; Java用ConcurrentHashMap天然线程安全
+private final ConcurrentHashMap<String, Map<String, String>> shutdownRequests
+        = new ConcurrentHashMap<>();
 
-def handle_shutdown_request(teammate: str) -> str:
-    req_id = str(uuid.uuid4())[:8]
-    shutdown_requests[req_id] = {"target": teammate, "status": "pending"}
-    BUS.send("lead", teammate, "Please shut down gracefully.",
-             "shutdown_request", {"request_id": req_id})
-    return f"Shutdown request {req_id} sent (status: pending)"
+public String handleShutdownRequest(String teammate) {
+    String reqId = UUID.randomUUID().toString().substring(0, 8);
+    shutdownRequests.put(reqId, new ConcurrentHashMap<>(Map.of(
+            "target", teammate, "status", "pending")));
+    bus.send("lead", teammate, "Please shut down gracefully.",
+            "shutdown_request", Map.of("request_id", reqId));
+    return "Shutdown request " + reqId + " sent to '" + teammate
+            + "' (status: pending)";
+}
 ```
 
 2. 队友收到请求后, 用 approve/reject 响应。
 
-```python
-if tool_name == "shutdown_response":
-    req_id = args["request_id"]
-    approve = args["approve"]
-    shutdown_requests[req_id]["status"] = "approved" if approve else "rejected"
-    BUS.send(sender, "lead", args.get("reason", ""),
-             "shutdown_response",
-             {"request_id": req_id, "approve": approve})
+```java
+// TeammateProtocolTool - 队友用@Tool注解响应关闭请求
+@Tool(description = "Respond to a shutdown request")
+public String shutdownResponse(
+        @ToolParam(description = "The request_id") String requestId,
+        @ToolParam(description = "true to approve") boolean approve,
+        @ToolParam(description = "Reason for decision") String reason) {
+    return tracker.respondToShutdown(name, requestId, approve, reason);
+}
+
+// ProtocolTracker - 更新追踪器 + 发送响应消息
+public String respondToShutdown(String sender, String requestId,
+                                boolean approve, String reason) {
+    var req = shutdownRequests.get(requestId);
+    if (req != null) {
+        req.put("status", approve ? "approved" : "rejected");
+    }
+    bus.send(sender, "lead", reason != null ? reason : "",
+            "shutdown_response",
+            Map.of("request_id", requestId, "approve", approve));
+    return "Shutdown " + (approve ? "approved" : "rejected");
+}
 ```
 
 3. 计划审批遵循完全相同的模式。队友提交计划 (生成 request_id), 领导审查 (引用同一个 request_id)。
 
-```python
-plan_requests = {}
+```java
+// ProtocolTracker - 同样的request_id关联模式，两种用途
+private final ConcurrentHashMap<String, Map<String, String>> planRequests
+        = new ConcurrentHashMap<>();
 
-def handle_plan_review(request_id, approve, feedback=""):
-    req = plan_requests[request_id]
-    req["status"] = "approved" if approve else "rejected"
-    BUS.send("lead", req["from"], feedback,
-             "plan_approval_response",
-             {"request_id": request_id, "approve": approve})
+public String reviewPlan(String requestId, boolean approve, String feedback) {
+    var req = planRequests.get(requestId);
+    if (req == null) return "Error: Unknown plan request_id '" + requestId + "'";
+    req.put("status", approve ? "approved" : "rejected");
+    bus.send("lead", req.get("from"), feedback != null ? feedback : "",
+            "plan_approval_response",
+            Map.of("request_id", requestId, "approve", approve,
+                    "feedback", feedback != null ? feedback : ""));
+    return "Plan " + req.get("status") + " for '" + req.get("from") + "'";
+}
 ```
 
 一个 FSM, 两种用途。同样的 `pending -> approved | rejected` 状态机可以套用到任何请求-响应协议上。
@@ -96,7 +122,7 @@ def handle_plan_review(request_id, approve, feedback=""):
 
 ```sh
 cd learn-claude-code
-python agents/s10_team_protocols.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s10.S10TeamProtocols
 ```
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):

@@ -15,6 +15,7 @@ const data = versionData as VersionIndex;
 
 export default function ComparePage() {
   const t = useTranslations("compare");
+  const tMeta = useTranslations("version_meta");
   const locale = useLocale();
   const [versionA, setVersionA] = useState<string>("");
   const [versionB, setVersionB] = useState<string>("");
@@ -68,7 +69,7 @@ export default function ComparePage() {
             onChange={(e) => setVersionA(e.target.value)}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
           >
-            <option value="">-- select --</option>
+            <option value="">{t("select_placeholder")}</option>
             {LEARNING_PATH.map((v) => (
               <option key={v} value={v}>
                 {v} - {VERSION_META[v]?.title}
@@ -88,7 +89,7 @@ export default function ComparePage() {
             onChange={(e) => setVersionB(e.target.value)}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
           >
-            <option value="">-- select --</option>
+            <option value="">{t("select_placeholder")}</option>
             {LEARNING_PATH.map((v) => (
               <option key={v} value={v}>
                 {v} - {VERSION_META[v]?.title}
@@ -106,7 +107,7 @@ export default function ComparePage() {
             <Card>
               <CardHeader>
                 <CardTitle>{metaA?.title || versionA}</CardTitle>
-                <p className="text-sm text-zinc-500">{metaA?.subtitle}</p>
+                <p className="text-sm text-zinc-500">{versionA ? tMeta(`${versionA}.subtitle`) : ""}</p>
               </CardHeader>
               <div className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
                 <p>{infoA.loc} LOC</p>
@@ -117,7 +118,7 @@ export default function ComparePage() {
             <Card>
               <CardHeader>
                 <CardTitle>{metaB?.title || versionB}</CardTitle>
-                <p className="text-sm text-zinc-500">{metaB?.subtitle}</p>
+                <p className="text-sm text-zinc-500">{versionB ? tMeta(`${versionB}.subtitle`) : ""}</p>
               </CardHeader>
               <div className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
                 <p>{infoB.loc} LOC</p>

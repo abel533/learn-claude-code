@@ -39,6 +39,7 @@ function getVersionData(id: string) {
 
 export default function HomePage() {
   const t = useTranslations("home");
+  const tMeta = useTranslations("version_meta");
   const locale = useLocale();
 
   return (
@@ -75,51 +76,65 @@ export default function HomePage() {
             <span className="h-3 w-3 rounded-full bg-red-500/70" />
             <span className="h-3 w-3 rounded-full bg-yellow-500/70" />
             <span className="h-3 w-3 rounded-full bg-green-500/70" />
-            <span className="ml-3 text-xs text-zinc-500">agent_loop.py</span>
+            <span className="ml-3 text-xs text-zinc-500">S01AgentLoop.java</span>
           </div>
           <pre className="overflow-x-auto p-4 text-sm leading-relaxed">
             <code>
-              <span className="text-purple-400">while</span>
+              <span className="text-zinc-500">{"// Spring AI ChatClient 自动处理工具调用循环"}</span>
+              {"\n"}
+              <span className="text-orange-300">ChatClient</span>
+              <span className="text-zinc-300"> chatClient = </span>
+              <span className="text-orange-300">ChatClient</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">builder</span>
+              <span className="text-zinc-500">(</span>
+              <span className="text-zinc-300">chatModel</span>
+              <span className="text-zinc-500">)</span>
+              {"\n"}
+              <span className="text-zinc-300">{"    "}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">defaultSystem</span>
+              <span className="text-zinc-500">(</span>
+              <span className="text-green-400">&quot;You are a coding agent.&quot;</span>
+              <span className="text-zinc-500">)</span>
+              {"\n"}
+              <span className="text-zinc-300">{"    "}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">defaultTools</span>
+              <span className="text-zinc-500">(</span>
+              <span className="text-purple-400">new</span>
               <span className="text-zinc-300"> </span>
-              <span className="text-orange-300">True</span>
-              <span className="text-zinc-500">:</span>
+              <span className="text-orange-300">BashTool</span>
+              <span className="text-zinc-500">())</span>
               {"\n"}
-              <span className="text-zinc-300">{"    "}response = client.messages.</span>
-              <span className="text-blue-400">create</span>
+              <span className="text-zinc-300">{"    "}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">build</span>
+              <span className="text-zinc-500">();</span>
+              {"\n\n"}
+              <span className="text-zinc-500">{"// 一次 call() 即可: 调用模型→检测工具→执行→回传"}</span>
+              {"\n"}
+              <span className="text-orange-300">String</span>
+              <span className="text-zinc-300"> result = chatClient.</span>
+              <span className="text-blue-400">prompt</span>
+              <span className="text-zinc-500">()</span>
+              {"\n"}
+              <span className="text-zinc-300">{"    "}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">user</span>
               <span className="text-zinc-500">(</span>
-              <span className="text-zinc-300">messages=</span>
-              <span className="text-zinc-300">messages</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-zinc-300"> tools=</span>
-              <span className="text-zinc-300">tools</span>
+              <span className="text-zinc-300">userMessage</span>
               <span className="text-zinc-500">)</span>
               {"\n"}
-              <span className="text-purple-400">{"    "}if</span>
-              <span className="text-zinc-300"> response.stop_reason != </span>
-              <span className="text-green-400">&quot;tool_use&quot;</span>
-              <span className="text-zinc-500">:</span>
+              <span className="text-zinc-300">{"    "}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">call</span>
+              <span className="text-zinc-500">()</span>
               {"\n"}
-              <span className="text-purple-400">{"        "}break</span>
-              {"\n"}
-              <span className="text-purple-400">{"    "}for</span>
-              <span className="text-zinc-300"> tool_call </span>
-              <span className="text-purple-400">in</span>
-              <span className="text-zinc-300"> response.content</span>
-              <span className="text-zinc-500">:</span>
-              {"\n"}
-              <span className="text-zinc-300">{"        "}result = </span>
-              <span className="text-blue-400">execute_tool</span>
-              <span className="text-zinc-500">(</span>
-              <span className="text-zinc-300">tool_call.name</span>
-              <span className="text-zinc-500">,</span>
-              <span className="text-zinc-300"> tool_call.input</span>
-              <span className="text-zinc-500">)</span>
-              {"\n"}
-              <span className="text-zinc-300">{"        "}messages.</span>
-              <span className="text-blue-400">append</span>
-              <span className="text-zinc-500">(</span>
-              <span className="text-zinc-300">result</span>
-              <span className="text-zinc-500">)</span>
+              <span className="text-zinc-300">{"    "}</span>
+              <span className="text-zinc-500">.</span>
+              <span className="text-blue-400">content</span>
+              <span className="text-zinc-500">();</span>
             </code>
           </pre>
         </div>
@@ -172,8 +187,13 @@ export default function HomePage() {
                   <h3 className="mt-3 text-sm font-semibold group-hover:underline">
                     {meta.title}
                   </h3>
+                  {tMeta(`${versionId}.title_local`) !== meta.title && (
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      {tMeta(`${versionId}.title_local`)}
+                    </p>
+                  )}
                   <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                    {meta.keyInsight}
+                    {tMeta(`${versionId}.keyInsight`)}
                   </p>
                 </Card>
               </Link>

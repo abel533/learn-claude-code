@@ -8,11 +8,13 @@
       "alternatives": "A single shared workspace is simpler but causes edit collisions and mixed git state. Fully independent task stores per lane avoid collisions but lose team-level visibility and make planning harder.",
       "zh": {
         "title": "共享任务板 + 隔离执行通道",
-        "description": "任务板继续集中在 `.tasks/`，而文件改动发生在按任务划分的 worktree 目录中。这样既保留了全局可见性（谁在做什么、完成到哪），又避免所有人同时写同一目录导致冲突。协调层简单（一个任务板），执行层安全（多条隔离通道）。"
+        "description": "任务板继续集中在 `.tasks/`，而文件改动发生在按任务划分的 worktree 目录中。这样既保留了全局可见性（谁在做什么、完成到哪），又避免所有人同时写同一目录导致冲突。协调层简单（一个任务板），执行层安全（多条隔离通道）。",
+        "alternatives": "单一共享工作区更简单，但会导致编辑冲突和混乱的 git 状态。每条通道完全独立的任务存储可以避免冲突，但失去了团队级可见性，也使规划更加困难。"
       },
       "ja": {
         "title": "共有タスクボード + 分離実行レーン",
-        "description": "タスクボードは `.tasks/` に集約しつつ、実際の編集はタスクごとの worktree ディレクトリで行う。これにより全体の可視性（担当と進捗）を維持しながら、単一ディレクトリでの衝突を回避できる。調整は1つのボードで単純化され、実行はレーン分離で安全になる。"
+        "description": "タスクボードは `.tasks/` に集約しつつ、実際の編集はタスクごとの worktree ディレクトリで行う。これにより全体の可視性（担当と進捗）を維持しながら、単一ディレクトリでの衝突を回避できる。調整は1つのボードで単純化され、実行はレーン分離で安全になる。",
+        "alternatives": "単一の共有ワークスペースはシンプルですが、編集の衝突や git 状態の混在を引き起こします。レーンごとに完全独立のタスクストアは衝突を回避しますが、チームレベルの可視性が失われ、計画が困難になります。"
       }
     },
     {
@@ -22,11 +24,13 @@
       "alternatives": "Relying only on `git worktree list` removes local bookkeeping but loses task binding metadata and custom lifecycle states. Keeping all state only in memory is simpler in code but breaks recoverability.",
       "zh": {
         "title": "显式 worktree 生命周期索引",
-        "description": "`.worktrees/index.json` 记录每个 worktree 的名称、路径、分支、task_id 与状态。即使上下文压缩或进程重启，这些生命周期状态仍可检查和恢复。它也为 list/status/remove 提供了确定性的本地数据源。"
+        "description": "`.worktrees/index.json` 记录每个 worktree 的名称、路径、分支、task_id 与状态。即使上下文压缩或进程重启，这些生命周期状态仍可检查和恢复。它也为 list/status/remove 提供了确定性的本地数据源。",
+        "alternatives": "仅依赖 `git worktree list` 可以省去本地记录，但会丢失任务绑定的元数据和自定义生命周期状态。仅在内存中保持所有状态在代码上更简单，但破坏了可恢复性。"
       },
       "ja": {
         "title": "明示的な worktree ライフサイクル索引",
-        "description": "`.worktrees/index.json` に name/path/branch/task_id/status を記録することで、コンテキスト圧縮やプロセス再起動後も状態を追跡できる。list/status/remove の挙動もこの索引を基準に決定できる。"
+        "description": "`.worktrees/index.json` に name/path/branch/task_id/status を記録することで、コンテキスト圧縮やプロセス再起動後も状態を追跡できる。list/status/remove の挙動もこの索引を基準に決定できる。",
+        "alternatives": "`git worktree list` のみに依存すればローカルの記録管理は不要になりますが、タスク紐付けメタデータやカスタムライフサイクル状態が失われます。すべての状態をメモリのみに保持するのはコード上シンプルですが、回復性が損なわれます。"
       }
     },
     {
@@ -36,11 +40,13 @@
       "alternatives": "Global cwd mutation is easy to implement but can leak context across parallel work. Allowing silent re-entry makes lifecycle ownership ambiguous and complicates teardown behavior.",
       "zh": {
         "title": "按通道 cwd 路由 + 禁止重入",
-        "description": "命令通过 `worktree_run(name, command)` 使用 `cwd` 参数路由到 worktree 目录。重入保护避免了在已激活的 worktree 上下文中意外二次进入，保持生命周期归属清晰。"
+        "description": "命令通过 `worktree_run(name, command)` 使用 `cwd` 参数路由到 worktree 目录。重入保护避免了在已激活的 worktree 上下文中意外二次进入，保持生命周期归属清晰。",
+        "alternatives": "全局 cwd 变更容易实现，但可能在并行工作间泄漏上下文。允许静默重入会使生命周期归属模糊，并使清理行为复杂化。"
       },
       "ja": {
         "title": "レーン単位 cwd ルーティング + 再入防止",
-        "description": "`worktree_run(name, command)` で `cwd` パラメータを使いコマンドを worktree ディレクトリへ転送する。再入ガードにより active な worktree への二重入場を防ぎ、ライフサイクルの帰属を明確に保つ。"
+        "description": "`worktree_run(name, command)` で `cwd` パラメータを使いコマンドを worktree ディレクトリへ転送する。再入ガードにより active な worktree への二重入場を防ぎ、ライフサイクルの帰属を明確に保つ。",
+        "alternatives": "グローバル cwd の変更は実装が簡単ですが、並行作業間でコンテキストが漏洩する可能性があります。サイレントな再入を許可するとライフサイクルの帰属が曖昧になり、ティアダウン動作が複雑になります。"
       }
     },
     {
@@ -50,11 +56,13 @@
       "alternatives": "Relying only on console logs is lighter but fragile during long sessions and hard to audit. A full event bus infrastructure is powerful but heavier than needed for this teaching baseline.",
       "zh": {
         "title": "追加式生命周期事件流",
-        "description": "生命周期事件写入 `.worktrees/events.jsonl`（如 `worktree.create.*`、`worktree.remove.*`、`task.completed`）。这样状态迁移可查询、可追踪，失败也会以 `*.failed` 显式暴露，而不是静默丢失。"
+        "description": "生命周期事件写入 `.worktrees/events.jsonl`（如 `worktree.create.*`、`worktree.remove.*`、`task.completed`）。这样状态迁移可查询、可追踪，失败也会以 `*.failed` 显式暴露，而不是静默丢失。",
+        "alternatives": "仅依赖控制台日志更轻量，但在长时间会话中脆弱且难以审计。完整的事件总线基础设施功能强大，但对这个教学基线来说过于重量级。"
       },
       "ja": {
         "title": "追記型ライフサイクルイベント",
-        "description": "ライフサイクルイベントを `.worktrees/events.jsonl` に追記する（`worktree.create.*`、`worktree.remove.*`、`task.completed` など）。遷移が可観測になり、失敗も `*.failed` として明示できる。"
+        "description": "ライフサイクルイベントを `.worktrees/events.jsonl` に追記する（`worktree.create.*`、`worktree.remove.*`、`task.completed` など）。遷移が可観測になり、失敗も `*.failed` として明示できる。",
+        "alternatives": "コンソールログのみに依存する方が軽量ですが、長時間セッションでは脆弱で監査が困難です。完全なイベントバスインフラは強力ですが、この教育用ベースラインには過剰です。"
       }
     },
     {
@@ -64,11 +72,13 @@
       "alternatives": "Keeping closeout fully manual gives flexibility but increases operational drift. Fully automatic removal on every completion risks deleting a workspace before final review.",
       "zh": {
         "title": "任务与工作区一起收尾",
-        "description": "`worktree_remove(..., complete_task=true)` 允许在一个动作里完成收尾：删除隔离目录并把绑定任务标记为 completed。收尾保持为显式工具驱动迁移（`worktree_keep` / `worktree_remove`），而不是隐藏的自动清理。这样可减少状态悬挂（任务已完成但临时工作区仍活跃，或反过来）。"
+        "description": "`worktree_remove(..., complete_task=true)` 允许在一个动作里完成收尾：删除隔离目录并把绑定任务标记为 completed。收尾保持为显式工具驱动迁移（`worktree_keep` / `worktree_remove`），而不是隐藏的自动清理。这样可减少状态悬挂（任务已完成但临时工作区仍活跃，或反过来）。",
+        "alternatives": "完全手动收尾提供了灵活性，但增加了操作偏差。每次完成时自动删除有在最终审查前删除工作区的风险。"
       },
       "ja": {
         "title": "タスクとワークスペースを同時にクローズ",
-        "description": "`worktree_remove(..., complete_task=true)` により、分離ディレクトリ削除とタスク完了更新を1ステップで実行できる。クローズ処理は `worktree_keep` / `worktree_remove` の明示ツール遷移として扱い、暗黙の自動清掃にはしない。"
+        "description": "`worktree_remove(..., complete_task=true)` により、分離ディレクトリ削除とタスク完了更新を1ステップで実行できる。クローズ処理は `worktree_keep` / `worktree_remove` の明示ツール遷移として扱い、暗黙の自動清掃にはしない。",
+        "alternatives": "完全手動のクローズアウトは柔軟性を提供しますが、運用上のドリフトが増加します。完了ごとの完全自動削除は最終レビュー前にワークスペースを削除するリスクがあります。"
       }
     },
     {
@@ -78,11 +88,13 @@
       "alternatives": "Using logs alone hides structured transitions; using events as the only state source risks drift when replay/repair semantics are undefined.",
       "zh": {
         "title": "事件流是观测旁路，不是状态机替身",
-        "description": "生命周期事件提升可审计性，但真实状态源仍是任务/工作区状态文件。事件更适合做迁移轨迹，而不是替代主状态机。"
+        "description": "生命周期事件提升可审计性，但真实状态源仍是任务/工作区状态文件。事件更适合做迁移轨迹，而不是替代主状态机。",
+        "alternatives": "仅使用日志会隐藏结构化的状态迁移；将事件作为唯一的状态源在重放/修复语义未定义时存在漂移风险。"
       },
       "ja": {
         "title": "イベントは観測サイドチャネルであり状態機械の代替ではない",
-        "description": "ライフサイクルイベントは監査性を高めるが、真の状態源は task/worktree 状態ファイルのまま。イベントは遷移トレースとして扱い、主状態機械の代替にしない。"
+        "description": "ライフサイクルイベントは監査性を高めるが、真の状態源は task/worktree 状態ファイルのまま。イベントは遷移トレースとして扱い、主状態機械の代替にしない。",
+        "alternatives": "ログだけでは構造化された遷移が隠れます。イベントを唯一の状態ソースとして使用すると、リプレイ/修復のセマンティクスが未定義の場合にドリフトのリスクがあります。"
       }
     }
   ]

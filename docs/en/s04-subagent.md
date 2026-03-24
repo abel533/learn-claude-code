@@ -8,7 +8,7 @@
 
 ## Problem
 
-As the agent works, its messages array grows. Every file read, every bash output stays in context permanently. "What testing framework does this project use?" might require reading 5 files, but the parent only needs the answer: "pytest."
+As the agent works, its messages array grows. Every file read, every bash output stays in context permanently. "What testing framework does this project use?" might require reading 5 files, but the parent only needs one word: "pytest."
 
 ## Solution
 
@@ -28,67 +28,75 @@ Parent context stays clean. Subagent context is discarded.
 
 ## How It Works
 
-1. The parent gets a `task` tool. The child gets all base tools except `task` (no recursive spawning).
+1. The parent agent has a `task` tool. The subagent gets all base tools except `task` (no recursive spawning).
 
-```python
-PARENT_TOOLS = CHILD_TOOLS + [
-    {"name": "task",
-     "description": "Spawn a subagent with fresh context.",
-     "input_schema": {
-         "type": "object",
-         "properties": {"prompt": {"type": "string"}},
-         "required": ["prompt"],
-     }},
-]
-```
-
-2. The subagent starts with `messages=[]` and runs its own loop. Only the final text returns to the parent.
-
-```python
-def run_subagent(prompt: str) -> str:
-    sub_messages = [{"role": "user", "content": prompt}]
-    for _ in range(30):  # safety limit
-        response = client.messages.create(
-            model=MODEL, system=SUBAGENT_SYSTEM,
-            messages=sub_messages,
-            tools=CHILD_TOOLS, max_tokens=8000,
+```java
+// Parent Agent: has base tools + SubagentTool
+this.chatClient = ChatClient.builder(chatModel)
+        .defaultSystem("You are a coding agent. "
+                + "Use the task tool to delegate subtasks.")
+        .defaultTools(
+                new BashTool(),
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new SubagentTool(chatModel)  // Parent Agent exclusive
         )
-        sub_messages.append({"role": "assistant",
-                             "content": response.content})
-        if response.stop_reason != "tool_use":
-            break
-        results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                handler = TOOL_HANDLERS.get(block.name)
-                output = handler(**block.input)
-                results.append({"type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(output)[:50000]})
-        sub_messages.append({"role": "user", "content": results})
-    return "".join(
-        b.text for b in response.content if hasattr(b, "text")
-    ) or "(no summary)"
+        .build();
 ```
 
-The child's entire message history (possibly 30+ tool calls) is discarded. The parent receives a one-paragraph summary as a normal `tool_result`.
+2. The subagent starts with a brand new `ChatClient` and an independent context. Only the final text returns to the parent.
+
+```java
+@Tool(description = "Spawn a subagent with fresh context. "
+        + "Use for exploration or subtasks that might pollute the main context.")
+public String task(
+        @ToolParam(description = "The task prompt") String prompt,
+        @ToolParam(description = "Short description", required = false)
+        String description) {
+
+    // Create a brand new ChatClient -- this IS "context isolation"
+    ChatClient subClient = ChatClient.builder(chatModel)
+            .defaultSystem("You are a coding subagent. "
+                    + "Complete the task, then summarize findings.")
+            .defaultTools(          // Base tools, no task (prevents recursion)
+                    new BashTool(),
+                    new ReadFileTool(),
+                    new WriteFileTool(),
+                    new EditFileTool()
+            )
+            .build();
+
+    String result = subClient.prompt()
+            .user(prompt)
+            .call()
+            .content();
+
+    // Only the final text is returned; subagent context is discarded
+    return (result != null) ? result : "(no summary)";
+}
+```
+
+The subagent may have run multiple tool calls, but its entire message history is discarded. The parent receives only a summary text, returned as a normal `tool_result`. Spring AI's `ChatClient.call()` manages the tool loop internally -- no need to manually limit iteration count.
 
 ## What Changed From s03
 
-| Component      | Before (s03)     | After (s04)               |
-|----------------|------------------|---------------------------|
-| Tools          | 5                | 5 (base) + task (parent)  |
-| Context        | Single shared    | Parent + child isolation  |
-| Subagent       | None             | `run_subagent()` function |
-| Return value   | N/A              | Summary text only         |
+| Component      | Before (s03)     | After (s04)                          |
+|----------------|------------------|---------------------------------------|
+| Tools          | 5                | 5 (base) + SubagentTool (parent only) |
+| Context        | Single shared    | Parent + child isolation (independent ChatClient) |
+| Subagent       | None             | `SubagentTool.task()` method          |
+| Return value   | N/A              | Summary text only                     |
 
 ## Try It
 
 ```sh
 cd learn-claude-code
-python agents/s04_subagent.py
+mvn exec:java -Dexec.mainClass=io.mybatis.learn.s04.S04Subagent
 ```
 
+Try these prompts (English prompts work better with LLMs, but Chinese also works):
+
 1. `Use a subtask to find what testing framework this project uses`
-2. `Delegate: read all .py files and summarize what each one does`
+2. `Delegate: read all .java files and summarize what each one does`
 3. `Use a task to create a new module, then verify it from here`

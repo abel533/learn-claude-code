@@ -14,28 +14,27 @@ You now have expertise in PDF manipulation. Follow these workflows:
 # Using pdftotext (poppler-utils)
 pdftotext input.pdf -  # Output to stdout
 pdftotext input.pdf output.txt  # Output to file
-
-# If pdftotext not available, try:
-python3 -c "
-import fitz  # PyMuPDF
-doc = fitz.open('input.pdf')
-for page in doc:
-    print(page.get_text())
-"
 ```
 
-**Option 2: Page-by-page with metadata**
-```python
-import fitz  # pip install pymupdf
+**Option 2: Page-by-page with metadata (Apache PDFBox)**
+```java
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import java.io.File;
 
-doc = fitz.open("input.pdf")
-print(f"Pages: {len(doc)}")
-print(f"Metadata: {doc.metadata}")
+PDDocument doc = PDDocument.load(new File("input.pdf"));
+System.out.println("Pages: " + doc.getNumberOfPages());
+System.out.println("Metadata: " + doc.getDocumentInformation().getTitle());
 
-for i, page in enumerate(doc):
-    text = page.get_text()
-    print(f"--- Page {i+1} ---")
-    print(text)
+PDFTextStripper stripper = new PDFTextStripper();
+for (int i = 1; i <= doc.getNumberOfPages(); i++) {
+    stripper.setStartPage(i);
+    stripper.setEndPage(i);
+    String text = stripper.getText(doc);
+    System.out.println("--- Page " + i + " ---");
+    System.out.println(text);
+}
+doc.close();
 ```
 
 ## Creating PDFs
@@ -49,64 +48,91 @@ pandoc input.md -o output.pdf
 pandoc input.md -o output.pdf --pdf-engine=xelatex -V geometry:margin=1in
 ```
 
-**Option 2: Programmatically**
-```python
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
+**Option 2: Programmatically (Apache PDFBox)**
+```java
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
 
-c = canvas.Canvas("output.pdf", pagesize=letter)
-c.drawString(100, 750, "Hello, PDF!")
-c.save()
+PDDocument doc = new PDDocument();
+PDPage page = new PDPage();
+doc.addPage(page);
+
+try (PDPageContentStream content = new PDPageContentStream(doc, page)) {
+    content.beginText();
+    content.setFont(PDType1Font.HELVETICA, 12);
+    content.newLineAtOffset(100, 750);
+    content.showText("Hello, PDF!");
+    content.endText();
+}
+doc.save("output.pdf");
+doc.close();
 ```
 
-**Option 3: From HTML**
-```bash
-# Using wkhtmltopdf
-wkhtmltopdf input.html output.pdf
+**Option 3: From HTML (OpenHTMLToPDF)**
+```java
+import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
-# Or with Python
-python3 -c "
-import pdfkit
-pdfkit.from_file('input.html', 'output.pdf')
-"
+String html = Files.readString(Path.of("input.html"));
+try (OutputStream os = new FileOutputStream("output.pdf")) {
+    PdfRendererBuilder builder = new PdfRendererBuilder();
+    builder.withHtmlContent(html, new File("input.html").toURI().toString());
+    builder.toStream(os);
+    builder.run();
+}
 ```
 
 ## Merging PDFs
 
-```python
-import fitz
+```java
+import org.apache.pdfbox.multipdf.PDFMergerUtility;
+import java.io.File;
 
-result = fitz.open()
-for pdf_path in ["file1.pdf", "file2.pdf", "file3.pdf"]:
-    doc = fitz.open(pdf_path)
-    result.insert_pdf(doc)
-result.save("merged.pdf")
+PDFMergerUtility merger = new PDFMergerUtility();
+merger.addSource(new File("file1.pdf"));
+merger.addSource(new File("file2.pdf"));
+merger.addSource(new File("file3.pdf"));
+merger.setDestinationFileName("merged.pdf");
+merger.mergeDocuments(null);
 ```
 
 ## Splitting PDFs
 
-```python
-import fitz
+```java
+import org.apache.pdfbox.multipdf.Splitter;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import java.io.File;
+import java.util.List;
 
-doc = fitz.open("input.pdf")
-for i in range(len(doc)):
-    single = fitz.open()
-    single.insert_pdf(doc, from_page=i, to_page=i)
-    single.save(f"page_{i+1}.pdf")
+PDDocument doc = PDDocument.load(new File("input.pdf"));
+Splitter splitter = new Splitter();
+splitter.setSplitAtPage(1); // 每页拆分为一个文件
+List<PDDocument> pages = splitter.split(doc);
+
+for (int i = 0; i < pages.size(); i++) {
+    pages.get(i).save("page_" + (i + 1) + ".pdf");
+    pages.get(i).close();
+}
+doc.close();
 ```
 
 ## Key Libraries
 
-| Task | Library | Install |
-|------|---------|---------|
-| Read/Write/Merge | PyMuPDF | `pip install pymupdf` |
-| Create from scratch | ReportLab | `pip install reportlab` |
-| HTML to PDF | pdfkit | `pip install pdfkit` + wkhtmltopdf |
+| Task | Library | Maven Dependency |
+|------|---------|-----------------|
+| Read/Write/Merge/Split | Apache PDFBox | `org.apache.pdfbox:pdfbox:3.0.x` |
+| Create from HTML | OpenHTMLToPDF | `com.openhtmltopdf:openhtmltopdf-pdfbox:1.0.x` |
+| Advanced layout | iText | `com.itextpdf:itext7-core:8.0.x` |
 | Text extraction | pdftotext | `brew install poppler` / `apt install poppler-utils` |
 
 ## Best Practices
 
 1. **Always check if tools are installed** before using them
 2. **Handle encoding issues** - PDFs may contain various character encodings
-3. **Large PDFs**: Process page by page to avoid memory issues
-4. **OCR for scanned PDFs**: Use `pytesseract` if text extraction returns empty
+3. **Large PDFs**: Process page by page to avoid memory issues; use try-with-resources 确保资源释放
+4. **OCR for scanned PDFs**: Use Tesseract4J (`net.sourceforge.tess4j:tess4j`) if text extraction returns empty

@@ -5,14 +5,16 @@
       "id": "jsonl-inbox",
       "title": "JSONL Inbox Files Instead of Shared Memory",
       "description": "Each teammate has its own inbox file (a JSONL file in the team directory). Sending a message means appending a JSON line to the recipient's inbox file. Reading messages means reading the inbox file and tracking which line was last read. JSONL is append-only by nature, which means concurrent writers don't corrupt each other's data (appends to different file positions). This works across processes without any shared memory, mutex, or IPC mechanism. It's also crash-safe: if the writer crashes mid-append, the worst case is one partial line that the reader can skip.",
-      "alternatives": "Shared memory (Python multiprocessing.Queue) would be faster but doesn't work if agents are separate processes launched independently. A message broker (Redis, RabbitMQ) provides robust pub/sub but adds infrastructure dependencies. Unix domain sockets would work but are harder to debug (no human-readable message log). JSONL files are the simplest approach that provides persistence, cross-process communication, and debuggability.",
+      "alternatives": "Shared memory (Java ConcurrentLinkedQueue or BlockingQueue) would be faster but doesn't work if agents are separate processes launched independently. A message broker (Redis, RabbitMQ) provides robust pub/sub but adds infrastructure dependencies. Unix domain sockets would work but are harder to debug (no human-readable message log). JSONL files are the simplest approach that provides persistence, cross-process communication, and debuggability.",
       "zh": {
         "title": "JSONL 收件箱文件而非共享内存",
-        "description": "每个队友都有自己的收件箱文件（团队目录中的 JSONL 文件）。发送消息意味着向接收者的收件箱文件追加一行 JSON。读取消息意味着读取收件箱文件并追踪上次读到的行。JSONL 天然是仅追加的，这意味着并发写入不会破坏彼此的数据（追加到不同的文件位置）。这在无需共享内存、互斥锁或 IPC 机制的情况下跨进程工作。它也是崩溃安全的：如果写入者在追加中途崩溃，最坏情况是一行不完整的数据，读取者可以跳过。"
+        "description": "每个队友都有自己的收件箱文件（团队目录中的 JSONL 文件）。发送消息意味着向接收者的收件箱文件追加一行 JSON。读取消息意味着读取收件箱文件并追踪上次读到的行。JSONL 天然是仅追加的，这意味着并发写入不会破坏彼此的数据（追加到不同的文件位置）。这在无需共享内存、互斥锁或 IPC 机制的情况下跨进程工作。它也是崩溃安全的：如果写入者在追加中途崩溃，最坏情况是一行不完整的数据，读取者可以跳过。",
+        "alternatives": "共享内存（Java ConcurrentLinkedQueue 或 BlockingQueue）更快，但在 agent 作为独立进程启动时无法工作。消息中间件（Redis、RabbitMQ）提供可靠的发布/订阅，但增加了基础设施依赖。Unix 域套接字可以工作但更难调试（没有人类可读的消息日志）。JSONL 文件是提供持久化、跨进程通信和可调试性的最简单方案。"
       },
       "ja": {
         "title": "共有メモリではなく JSONL インボックスファイル",
-        "description": "各チームメイトはチームディレクトリ内に独自のインボックスファイル（JSONL ファイル）を持ちます。メッセージの送信は受信者のインボックスファイルに JSON 行を追記することです。メッセージの読み取りはインボックスファイルを読んで最後に読んだ行を追跡することです。JSONL は本質的に追記専用で、並行ライターが互いのデータを破壊しません（異なるファイル位置への追記）。共有メモリ、ミューテックス、IPC メカニズムなしにプロセス間で動作します。"
+        "description": "各チームメイトはチームディレクトリ内に独自のインボックスファイル（JSONL ファイル）を持ちます。メッセージの送信は受信者のインボックスファイルに JSON 行を追記することです。メッセージの読み取りはインボックスファイルを読んで最後に読んだ行を追跡することです。JSONL は本質的に追記専用で、並行ライターが互いのデータを破壊しません（異なるファイル位置への追記）。共有メモリ、ミューテックス、IPC メカニズムなしにプロセス間で動作します。",
+        "alternatives": "共有メモリ（Java の ConcurrentLinkedQueue や BlockingQueue）はより高速ですが、エージェントが独立プロセスとして起動される場合は機能しません。メッセージブローカー（Redis、RabbitMQ）は堅牢なパブ/サブを提供しますが、インフラ依存が増えます。Unix ドメインソケットは機能しますがデバッグが困難です（人間可読なメッセージログがない）。JSONL ファイルは永続性、プロセス間通信、デバッグ容易性を提供する最もシンプルなアプローチです。"
       }
     },
     {
@@ -22,11 +24,13 @@
       "alternatives": "A single generic message type with metadata fields would be more flexible but makes it harder to enforce protocol correctness. Many more types (10+) would provide finer-grained semantics but increase the model's decision burden. Five types is the sweet spot where every type has a clear, distinct purpose.",
       "zh": {
         "title": "恰好五种消息类型覆盖所有协调模式",
-        "description": "消息系统恰好支持五种类型：(1) message 用于两个 agent 间的点对点通信；(2) broadcast 用于全团队公告；(3) shutdown_request 用于优雅终止；(4) shutdown_response 用于确认终止；(5) plan_approval_response 用于组长批准或拒绝队友的计划。这五种类型映射到基本协调模式：直接通信、广播、生命周期管理和审批流程。"
+        "description": "消息系统恰好支持五种类型：(1) message 用于两个 agent 间的点对点通信；(2) broadcast 用于全团队公告；(3) shutdown_request 用于优雅终止；(4) shutdown_response 用于确认终止；(5) plan_approval_response 用于组长批准或拒绝队友的计划。这五种类型映射到基本协调模式：直接通信、广播、生命周期管理和审批流程。",
+        "alternatives": "单一的通用消息类型加元数据字段更灵活，但更难确保协议正确性。更多类型（10 种以上）能提供更细粒度的语义，但增加了模型的决策负担。五种类型是最佳平衡点，每种类型都有明确而独特的用途。"
       },
       "ja": {
         "title": "正確に5つのメッセージタイプで全連携パターンをカバー",
-        "description": "メッセージングシステムは正確に5つのタイプをサポートします：(1) message は2つのエージェント間のポイントツーポイント通信、(2) broadcast はチーム全体への通知、(3) shutdown_request はグレースフルな終了要求、(4) shutdown_response はシャットダウンの確認応答、(5) plan_approval_response はリーダーによるチームメイトの計画の承認・却下。"
+        "description": "メッセージングシステムは正確に5つのタイプをサポートします：(1) message は2つのエージェント間のポイントツーポイント通信、(2) broadcast はチーム全体への通知、(3) shutdown_request はグレースフルな終了要求、(4) shutdown_response はシャットダウンの確認応答、(5) plan_approval_response はリーダーによるチームメイトの計画の承認・却下。",
+        "alternatives": "メタデータフィールド付きの単一汎用メッセージタイプはより柔軟ですが、プロトコルの正確性を強制するのが難しくなります。より多くのタイプ（10以上）はきめ細かなセマンティクスを提供しますが、モデルの判断負担が増えます。5つのタイプは各タイプが明確で独自の目的を持つスイートスポットです。"
       }
     },
     {
@@ -36,11 +40,13 @@
       "alternatives": "Checking inbox after each tool execution would be more responsive but adds overhead to every tool call, which is more frequent than LLM calls. A separate watcher thread could monitor the inbox continuously but adds threading complexity. Checking once per LLM call is the pragmatic sweet spot: responsive enough for coordination, cheap enough to not impact performance.",
       "zh": {
         "title": "每次 LLM 调用前检查收件箱",
-        "description": "队友在每次 agent 循环迭代的顶部、调用 LLM API 之前检查收件箱文件。这确保了对传入消息的最大响应性：一个终止请求会在一个循环迭代内被看到（通常几秒钟），而非在当前任务完成后（可能数分钟）。收件箱检查成本很低（读取小文件，检查是否有新行），相比 LLM 调用（秒级延迟，数千 token）微不足道。这个位置还意味着传入消息可以影响下一次 LLM 调用——一条'停止 X，转去做 Y'的消息会立即生效。"
+        "description": "队友在每次 agent 循环迭代的顶部、调用 LLM API 之前检查收件箱文件。这确保了对传入消息的最大响应性：一个终止请求会在一个循环迭代内被看到（通常几秒钟），而非在当前任务完成后（可能数分钟）。收件箱检查成本很低（读取小文件，检查是否有新行），相比 LLM 调用（秒级延迟，数千 token）微不足道。这个位置还意味着传入消息可以影响下一次 LLM 调用——一条'停止 X，转去做 Y'的消息会立即生效。",
+        "alternatives": "在每次工具执行后检查收件箱响应更快，但为每次工具调用增加了开销，而工具调用比 LLM 调用更频繁。独立的监视线程可以持续监控收件箱，但增加了线程复杂度。每次 LLM 调用检查一次是务实的最佳平衡点：对协调足够响应，对性能影响足够小。"
       },
       "ja": {
         "title": "毎回の LLM 呼び出し前にインボックスを確認",
-        "description": "チームメイトはエージェントループの各イテレーションの冒頭、LLM API を呼び出す前にインボックスファイルを確認します。これにより受信メッセージへの応答性を最大化します：シャットダウンリクエストは1ループイテレーション以内（通常数秒）で確認され、現在のタスク完了後（数分かかる可能性）ではありません。"
+        "description": "チームメイトはエージェントループの各イテレーションの冒頭、LLM API を呼び出す前にインボックスファイルを確認します。これにより受信メッセージへの応答性を最大化します：シャットダウンリクエストは1ループイテレーション以内（通常数秒）で確認され、現在のタスク完了後（数分かかる可能性）ではありません。",
+        "alternatives": "各ツール実行後にインボックスを確認すればより応答性が高まりますが、LLM 呼び出しより頻繁なツール呼び出しごとにオーバーヘッドが追加されます。別のウォッチャースレッドでインボックスを継続監視できますが、スレッドの複雑さが増します。LLM 呼び出しごとに1回の確認は、連携に十分な応答性とパフォーマンスへの影響の少なさを両立する実用的なスイートスポットです。"
       }
     }
   ]

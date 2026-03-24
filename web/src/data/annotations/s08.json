@@ -3,44 +3,50 @@
   "decisions": [
     {
       "id": "notification-bus",
-      "title": "threading.Queue as the Notification Bus",
-      "description": "Background task results are delivered via a threading.Queue instead of direct callbacks. The background thread puts a notification on the queue when its work completes. The main agent loop polls the queue before each LLM call. This decoupling is important: the background thread doesn't need to know anything about the main loop's state or timing. It just drops a message on the queue and moves on. The main loop picks it up at its own pace -- never mid-API-call, never mid-tool-execution. No race conditions, no callback hell.",
-      "alternatives": "Direct callbacks (background thread calls a function in the main thread) would deliver results faster but create thread-safety issues -- the callback might fire while the main thread is in the middle of building a request. Event-driven systems (asyncio, event emitters) work but add complexity. A queue is the simplest thread-safe communication primitive.",
+      "title": "ConcurrentLinkedQueue as the Notification Bus",
+      "description": "Background task results are delivered via a ConcurrentLinkedQueue instead of direct callbacks. The background thread puts a notification on the queue when its work completes. The main agent loop polls the queue before each LLM call. This decoupling is important: the background thread doesn't need to know anything about the main loop's state or timing. It just drops a message on the queue and moves on. The main loop picks it up at its own pace -- never mid-API-call, never mid-tool-execution. No race conditions, no callback hell.",
+      "alternatives": "Direct callbacks (background thread calls a function in the main thread) would deliver results faster but create thread-safety issues -- the callback might fire while the main thread is in the middle of building a request. Event-driven systems (CompletableFuture, event emitters) work but add complexity. A queue is the simplest thread-safe communication primitive.",
       "zh": {
-        "title": "用 threading.Queue 作为通知总线",
-        "description": "后台任务结果通过 threading.Queue 传递，而非直接回调。后台线程在工作完成时向队列放入通知，主 agent 循环在每次 LLM 调用前轮询队列。这种解耦很重要：后台线程无需了解主循环的状态或时序，只需往队列放入消息然后继续。主循环按自己的节奏取出消息——永远不会在 API 调用中途或工具执行中途。没有竞争条件，没有回调地狱。"
+        "title": "用 ConcurrentLinkedQueue 作为通知总线",
+        "description": "后台任务结果通过 ConcurrentLinkedQueue 传递，而非直接回调。后台线程在工作完成时向队列放入通知，主 agent 循环在每次 LLM 调用前轮询队列。这种解耦很重要：后台线程无需了解主循环的状态或时序，只需往队列放入消息然后继续。主循环按自己的节奏取出消息——永远不会在 API 调用中途或工具执行中途。没有竞争条件，没有回调地狱。",
+        "alternatives": "直接回调（后台线程调用主线程中的函数）能更快传递结果，但会产生线程安全问题——回调可能在主线程正在构建请求时触发。事件驱动系统（CompletableFuture、事件发射器）可行但增加复杂性。队列是最简单的线程安全通信原语。"
       },
       "ja": {
-        "title": "threading.Queue を通知バスとして使用",
-        "description": "バックグラウンドタスクの結果は直接コールバックではなく threading.Queue を通じて配信されます。バックグラウンドスレッドは作業完了時にキューに通知を投入します。メインのエージェントループは各 LLM 呼び出しの前にキューをポーリングします。この疎結合が重要です：バックグラウンドスレッドはメインループの状態やタイミングを一切知る必要がありません。キューにメッセージを入れて先に進むだけです。メインループは自分のペースで取り出します――API 呼び出しの途中でもツール実行の途中でもありません。レースコンディションもコールバック地獄もありません。"
+        "title": "ConcurrentLinkedQueue を通知バスとして使用",
+        "description": "バックグラウンドタスクの結果は直接コールバックではなく ConcurrentLinkedQueue を通じて配信されます。バックグラウンドスレッドは作業完了時にキューに通知を投入します。メインのエージェントループは各 LLM 呼び出しの前にキューをポーリングします。この疎結合が重要です：バックグラウンドスレッドはメインループの状態やタイミングを一切知る必要がありません。キューにメッセージを入れて先に進むだけです。メインループは自分のペースで取り出します――API 呼び出しの途中でもツール実行の途中でもありません。レースコンディションもコールバック地獄もありません。",
+        "alternatives": "直接コールバック（バックグラウンドスレッドがメインスレッドの関数を呼び出す）は結果をより速く届けますが、スレッドセーフティの問題が生じます――メインスレッドがリクエストを構築中にコールバックが発火する可能性があります。イベント駆動システム（CompletableFuture、イベントエミッター）は機能しますが複雑さが増します。キューは最もシンプルなスレッドセーフな通信プリミティブです。"
       }
     },
     {
       "id": "daemon-threads",
-      "title": "Background Tasks Run as Daemon Threads",
-      "description": "Background task threads are created with daemon=True. In Python, daemon threads are killed automatically when the main thread exits. This prevents a common problem: if the main agent completes its work and exits, but a background thread is still running (waiting on a long API call, stuck in a loop), the process would hang indefinitely. With daemon threads, exit is clean -- the main thread finishes, all daemon threads die, process exits. No zombie processes, no cleanup code needed.",
-      "alternatives": "Non-daemon threads with explicit cleanup (join with timeout, then terminate) give more control over shutdown but require careful lifecycle management. Process-based parallelism (multiprocessing) provides stronger isolation but higher overhead. Daemon threads are the pragmatic choice: minimal code, correct behavior in the common case.",
+      "title": "Background Tasks Run as Virtual Threads",
+      "description": "Background tasks are launched as virtual threads via Thread.startVirtualThread(). In Java 21+, virtual threads are lightweight, managed by the JVM, and do not prevent the main thread from exiting. This prevents a common problem: if the main agent completes its work and exits, but a background thread is still running (waiting on a long API call, stuck in a loop), the process would hang indefinitely. With virtual threads (which are daemon by default), exit is clean -- the main thread finishes, all virtual threads are terminated, process exits. No zombie processes, no cleanup code needed.",
+      "alternatives": "Platform threads with explicit cleanup (join with timeout, then interrupt) give more control over shutdown but require careful lifecycle management. Process-based parallelism (ProcessBuilder) provides stronger isolation but higher overhead. Virtual threads are the pragmatic choice: minimal code, correct behavior in the common case.",
       "zh": {
-        "title": "后台任务以守护线程运行",
-        "description": "后台任务线程以 daemon=True 创建。在 Python 中，守护线程在主线程退出时自动被终止。这防止了一个常见问题：如果主 agent 完成工作并退出，但后台线程仍在运行（等待一个长时间 API 调用或陷入循环），进程会无限挂起。使用守护线程，退出是干净的——主线程结束，所有守护线程自动终止，进程退出。没有僵尸进程，不需要清理代码。"
+        "title": "后台任务以虚拟线程运行",
+        "description": "后台任务通过 Thread.startVirtualThread() 以虚拟线程启动。在 Java 21+ 中，虚拟线程是轻量级的，由 JVM 管理，不会阻止主线程退出。这防止了一个常见问题：如果主 agent 完成工作并退出，但后台线程仍在运行（等待一个长时间 API 调用或陷入循环），进程会无限挂起。虚拟线程默认是守护线程，退出是干净的——主线程结束，所有虚拟线程自动终止，进程退出。没有僵尸进程，不需要清理代码。",
+        "alternatives": "使用平台线程加显式清理（带超时的 join 后 interrupt）可以获得更多关闭控制，但需要谨慎的生命周期管理。基于进程的并行（ProcessBuilder）提供更强的隔离但开销更高。虚拟线程是务实的选择：代码最少，常见场景下行为正确。"
       },
       "ja": {
-        "title": "バックグラウンドタスクはデーモンスレッドとして実行",
-        "description": "バックグラウンドタスクのスレッドは daemon=True で作成されます。Python ではデーモンスレッドはメインスレッドの終了時に自動的に終了されます。これにより一般的な問題を防ぎます：メインエージェントが作業を完了して終了しても、バックグラウンドスレッドがまだ実行中（長い API 呼び出しを待機、ループに陥っている）だとプロセスが無限にハングします。デーモンスレッドならクリーンに終了できます――メインスレッドが終了すると全デーモンスレッドが自動終了し、プロセスが終了します。ゾンビプロセスもクリーンアップコードも不要です。"
+        "title": "バックグラウンドタスクは仮想スレッドとして実行",
+        "description": "バックグラウンドタスクは Thread.startVirtualThread() により仮想スレッドとして起動されます。Java 21+ では仮想スレッドは軽量で JVM が管理し、メインスレッドの終了を妨げません。これにより一般的な問題を防ぎます：メインエージェントが作業を完了して終了しても、バックグラウンドスレッドがまだ実行中（長い API 呼び出しを待機、ループに陥っている）だとプロセスが無限にハングします。仮想スレッドはデフォルトでデーモンスレッドなのでクリーンに終了できます――メインスレッドが終了すると全仮想スレッドが自動終了し、プロセスが終了します。ゾンビプロセスもクリーンアップコードも不要です。",
+        "alternatives": "プラットフォームスレッドと明示的なクリーンアップ（タイムアウト付き join 後に interrupt）はシャットダウンをより細かく制御できますが、慎重なライフサイクル管理が必要です。プロセスベースの並列処理（ProcessBuilder）はより強い分離を提供しますがオーバーヘッドが大きくなります。仮想スレッドは実用的な選択です：最小限のコードで一般的なケースでは正しく動作します。"
       }
     },
     {
       "id": "attachment-format",
       "title": "Structured Notification Format with Type Tags",
       "description": "Notifications from background tasks use a structured format: {\"type\": \"attachment\", \"attachment\": {status, result, ...}} instead of plain text strings. The type tag lets the main loop handle different notification types differently: an 'attachment' might be injected into the conversation as a tool_result, while a 'status_update' might just update a progress indicator. Machine-readable notifications also enable programmatic filtering (show only errors, suppress progress updates) and UI rendering (display status as a progress bar, not raw text).",
-      "alternatives": "Plain text notifications are simpler but lose structure. The main loop would have to parse free-form text to determine what happened, which is fragile. A class hierarchy (StatusNotification, ResultNotification, ErrorNotification) is more Pythonic but less portable -- JSON structures work the same way regardless of language or serialization format.",
+      "alternatives": "Plain text notifications are simpler but lose structure. The main loop would have to parse free-form text to determine what happened, which is fragile. A class hierarchy (StatusNotification, ResultNotification, ErrorNotification) is more idiomatic in Java but less portable -- JSON structures work the same way regardless of language or serialization format.",
       "zh": {
         "title": "带类型标签的结构化通知格式",
-        "description": "后台任务的通知使用结构化格式：{\"type\": \"attachment\", \"attachment\": {status, result, ...}}，而非纯文本字符串。类型标签让主循环可以区别处理不同通知类型：attachment 可能作为 tool_result 注入对话，而 status_update 可能只更新进度指示器。机器可读的通知还支持程序化过滤（只显示错误、抑制进度更新）和 UI 渲染（将状态显示为进度条而非原始文本）。"
+        "description": "后台任务的通知使用结构化格式：{\"type\": \"attachment\", \"attachment\": {status, result, ...}}，而非纯文本字符串。类型标签让主循环可以区别处理不同通知类型：attachment 可能作为 tool_result 注入对话，而 status_update 可能只更新进度指示器。机器可读的通知还支持程序化过滤（只显示错误、抑制进度更新）和 UI 渲染（将状态显示为进度条而非原始文本）。",
+        "alternatives": "纯文本通知更简单但丢失了结构。主循环必须解析自由格式文本来判断发生了什么，这很脆弱。类层级结构（StatusNotification、ResultNotification、ErrorNotification）在 Java 中更惯用但移植性较差——JSON 结构无论何种语言或序列化格式都以相同方式工作。"
       },
       "ja": {
         "title": "型タグ付き構造化通知フォーマット",
-        "description": "バックグラウンドタスクからの通知は構造化フォーマットを使用します：プレーンテキストではなく {\"type\": \"attachment\", \"attachment\": {status, result, ...}} です。型タグによりメインループは異なる通知タイプを異なる方法で処理できます：attachment は会話に tool_result として注入され、status_update は進捗インジケーターの更新のみを行うかもしれません。機械可読な通知はプログラム的なフィルタリング（エラーのみ表示、進捗更新の抑制）や UI レンダリング（ステータスを生テキストではなくプログレスバーとして表示）も可能にします。"
+        "description": "バックグラウンドタスクからの通知は構造化フォーマットを使用します：プレーンテキストではなく {\"type\": \"attachment\", \"attachment\": {status, result, ...}} です。型タグによりメインループは異なる通知タイプを異なる方法で処理できます：attachment は会話に tool_result として注入され、status_update は進捗インジケーターの更新のみを行うかもしれません。機械可読な通知はプログラム的なフィルタリング（エラーのみ表示、進捗更新の抑制）や UI レンダリング（ステータスを生テキストではなくプログレスバーとして表示）も可能にします。",
+        "alternatives": "プレーンテキスト通知はシンプルですが構造が失われます。メインループは何が起きたかを判断するために自由形式のテキストを解析する必要があり、これは脆弱です。クラス階層（StatusNotification、ResultNotification、ErrorNotification）は Java ではより慣用的ですが移植性が低くなります――JSON 構造は言語やシリアライゼーション形式に関係なく同じように機能します。"
       }
     }
   ]
