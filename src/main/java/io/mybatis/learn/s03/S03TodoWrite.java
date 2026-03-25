@@ -85,11 +85,6 @@ public class S03TodoWrite implements CommandLineRunner {
                     .call()
                     .content();
 
-            // 每次回复后打印当前 todo 状态
-            System.out.println("\n--- Todo Status ---");
-            System.out.println(todoManager.render());
-            System.out.println("-------------------");
-
             return response;
         });
     }

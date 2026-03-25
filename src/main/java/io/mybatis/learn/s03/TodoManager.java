@@ -1,5 +1,7 @@
 package io.mybatis.learn.s03;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
@@ -22,6 +24,8 @@ import java.util.List;
  * </ul>
  */
 public class TodoManager {
+
+    private static final Logger log = LoggerFactory.getLogger(TodoManager.class);
 
     /**
      * Todo 项数据结构。
@@ -73,7 +77,11 @@ public class TodoManager {
         }
 
         this.items = validated;
-        return render();
+        String rendered = render();
+        if (log.isDebugEnabled()) {
+            System.out.printf("📋 调用工具 [Todo] 更新 %d 项任务%n%s%n", items.size(), rendered);
+        }
+        return rendered;
     }
 
     /**

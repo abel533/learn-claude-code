@@ -24,7 +24,13 @@ import java.util.stream.Collectors;
  * <p>
  * TIP: 对应 Python {@code agents/s08_background_tasks.py} 中的 {@code BackgroundManager} 类。
  * Python 使用 {@code threading.Thread(daemon=True)}，
- * Java 使用 {@link ExecutorService} + 虚拟线程（Java 21）。
+ * Java 同样使用 daemon 平台线程（而非虚拟线程）。
+ * <p>
+ * ⚠️ 为何不用虚拟线程：{@code execute()} 内通过 {@code BufferedReader.lines()} 读取进程输出，
+ * 底层调用 {@code FileInputStream.read0()}（native 方法），会将虚拟线程
+ * <b>钉住（pin）在载体线程（carrier thread）</b> 上。
+ * 载体线程池大小 = {@code availableProcessors()}，若池耗尽则后续任务只能串行等待。
+ * daemon 平台线程没有此约束，可真正并行执行多个阻塞 I/O 任务，符合 Python 版行为。
  * <pre>
  *   Main thread              Background thread
  *   +-----------------+      +-----------------+
@@ -42,7 +48,14 @@ public class BackgroundManager {
 
     private final Map<String, TaskInfo> tasks = new ConcurrentHashMap<>();
     private final List<Notification> notificationQueue = new CopyOnWriteArrayList<>();
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    // TIP: 使用 daemon 平台线程而非虚拟线程。
+    // 读取进程输出时底层会调用 native read0()，虚拟线程遇到 native 方法会被 pin 在载体线程上，
+    // 导致多个后台任务串行排队。平台线程无此限制，对应 Python 的 threading.Thread(daemon=True)。
+    private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "bg-worker");
+        t.setDaemon(true);
+        return t;
+    });
     private final String workDir;
 
     record TaskInfo(String status, String result, String command) {
@@ -56,7 +69,9 @@ public class BackgroundManager {
         log.info("BackgroundManager 初始化，workDir={}", workDir);
     }
 
-    @Tool(description = "Run a command in a background thread. Returns task_id immediately without waiting.")
+    @Tool(description = "Run a command in a background thread. Returns task_id immediately without waiting. "
+            + "When starting multiple independent background tasks, call this tool for ALL of them "
+            + "in a single response (parallel function calls) so they start at the same time.")
     public String backgroundRun(
             @ToolParam(description = "The shell command to run in background") String command) {
         String taskId = UUID.randomUUID().toString().substring(0, 8);

@@ -50,8 +50,15 @@ public class S08BackgroundTasks implements CommandLineRunner {
                 System.out.println("[Background tasks completed: " + notifs.size() + "]");
             }
 
+            // TIP: 明确要求 LLM 并行调用 backgroundRun，避免逐个调用导致任务串行提交。
+            // 同时注入当前 OS 信息，让 LLM 选择平台适配的命令（如 Windows 用 timeout /t N /nobreak 替代 sleep N）。
+            String os = System.getProperty("os.name");
             String system = "You are a coding agent at " + workDir
-                    + ". Use backgroundRun for long-running commands." + bgContext;
+                    + ". Current OS: " + os + "."
+                    + " Use backgroundRun for long-running commands."
+                    + " When starting multiple independent background tasks, issue ALL backgroundRun"
+                    + " calls in a single parallel batch so they begin simultaneously."
+                    + bgContext;
 
             ChatClient chatClient = ChatClient.builder(chatModel)
                     .defaultSystem(system)
